@@ -28,7 +28,7 @@ include(${CPM_DOWNLOAD_LOCATION})
 CPMAddPackage(
     NAME Catch2
     GITHUB_REPOSITORY catchorg/Catch2
-    VERSION 3.7.1
+    GIT_TAG v3.7.1
 )
 
 add_executable(Tests
@@ -60,5 +60,9 @@ target_link_libraries(Tests PRIVATE
 target_compile_features(Tests PRIVATE cxx_std_20)
 
 include(CTest)
+
+# Tell CMake where to find Catch.cmake inside the downloaded Catch2 package
+list(APPEND CMAKE_MODULE_PATH ${Catch2_SOURCE_DIR}/extras)
+
 include(Catch)
 catch_discover_tests(Tests DISCOVERY_MODE PRE_TEST)
