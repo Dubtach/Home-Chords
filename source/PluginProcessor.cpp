@@ -1,187 +1,167 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
-//==============================================================================
-PluginProcessor::PluginProcessor()
-     : AudioProcessor (BusesProperties()
-                     #if ! JucePlugin_IsMidiEffect
-                      #if ! JucePlugin_IsSynth
-                       .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
-                      #endif
-                       .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
-                     #endif
-                       )
+HomeChordsAudioProcessor::HomeChordsAudioProcessor()
+    : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+      apvts (*this, nullptr, "Parameters", createParameters())
 {
 }
 
-PluginProcessor::~PluginProcessor()
+juce::AudioProcessorValueTreeState::ParameterLayout HomeChordsAudioProcessor::createParameters()
 {
+    using FloatAttributes = juce::AudioParameterFloatAttributes;
+    using IntAttributes = juce::AudioParameterIntAttributes;
+    using ChoiceAttributes = juce::AudioParameterChoiceAttributes;
+
+    std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
+
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        "KEY", "Key", musictheory::getAllKeyNames(), 0, ChoiceAttributes{}));
+
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        "SCALE", "Scale", musictheory::getAllScaleNames(), 0, ChoiceAttributes{}));
+
+    params.push_back (std::make_unique<juce::AudioParameterInt> (
+        "OCTAVE", "Octave", -2, 2, 0, IntAttributes{}));
+
+    params.push_back (std::make_unique<juce::AudioParameterInt> (
+        "VELOCITY", "Velocity", 1, 127, 100, IntAttributes{}));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        "PREVIEW_GAIN", "Preview Volume",
+        juce::NormalisableRange<float> (-48.0f, 6.0f, 0.1f), -6.0f,
+        FloatAttributes{}.withLabel ("dB")));
+
+    return { params.begin(), params.end() };
 }
 
-//==============================================================================
-const juce::String PluginProcessor::getName() const
+int HomeChordsAudioProcessor::getKeyTonicPitchClass() const noexcept
 {
-    return JucePlugin_Name;
+    return static_cast<int> (apvts.getRawParameterValue ("KEY")->load());
 }
 
-bool PluginProcessor::acceptsMidi() const
+musictheory::ScaleType HomeChordsAudioProcessor::getScaleType() const noexcept
 {
-   #if JucePlugin_WantsMidiInput
-    return true;
-   #else
-    return false;
-   #endif
+    const auto index = static_cast<int> (apvts.getRawParameterValue ("SCALE")->load());
+    return static_cast<musictheory::ScaleType> (juce::jlimit (0, musictheory::numScaleTypes - 1, index));
 }
 
-bool PluginProcessor::producesMidi() const
+std::vector<musictheory::ChordDefinition> HomeChordsAudioProcessor::getCurrentDiatonicChords() const
 {
-   #if JucePlugin_ProducesMidiOutput
-    return true;
-   #else
-    return false;
-   #endif
+    return musictheory::buildDiatonicChords (getKeyTonicPitchClass(), getScaleType());
 }
 
-bool PluginProcessor::isMidiEffect() const
+void HomeChordsAudioProcessor::prepareToPlay (double newSampleRate, int samplesPerBlock)
 {
-   #if JucePlugin_IsMidiEffect
-    return true;
-   #else
-    return false;
-   #endif
+    sampleRate = newSampleRate;
+    keyboardEngine.reset();
+    previewSynth.prepare (sampleRate, samplesPerBlock);
+    midiActivityForUi.store (0.0f, std::memory_order_relaxed);
 }
 
-double PluginProcessor::getTailLengthSeconds() const
+void HomeChordsAudioProcessor::releaseResources()
 {
-    return 0.0;
+    // No MidiBuffer is available here to send final Note Offs through, so
+    // this only clears internal state. The editor releases every held
+    // slot (generating real Note Offs on the next block) when it loses
+    // keyboard focus or is closed -- see PluginEditor. A host that hard-
+    // kills the plugin mid-chord is the one case this can't fully cover;
+    // hosts generally send their own all-notes-off in that situation.
+    keyboardEngine.reset();
+    previewSynth.reset();
 }
 
-int PluginProcessor::getNumPrograms()
+bool HomeChordsAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
-    return 1;   // NB: some hosts don't cope very well if you tell them there are 0 programs,
-                // so this should be at least 1, even if you're not really implementing programs.
+    const auto mainOut = layouts.getMainOutputChannelSet();
+    return mainOut == juce::AudioChannelSet::mono() || mainOut == juce::AudioChannelSet::stereo();
 }
 
-int PluginProcessor::getCurrentProgram()
+void HomeChordsAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
-    return 0;
-}
-
-void PluginProcessor::setCurrentProgram (int index)
-{
-    juce::ignoreUnused (index);
-}
-
-const juce::String PluginProcessor::getProgramName (int index)
-{
-    juce::ignoreUnused (index);
-    // Steinberg's VST3 validator fails plugins whose single default program has no name
-    return "Default";
-}
-
-void PluginProcessor::changeProgramName (int index, const juce::String& newName)
-{
-    juce::ignoreUnused (index, newName);
-}
-
-//==============================================================================
-void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
-{
-    // Use this method as the place to do any pre-playback
-    // initialisation that you need..
-    juce::ignoreUnused (sampleRate, samplesPerBlock);
-}
-
-void PluginProcessor::releaseResources()
-{
-    // When playback stops, you can use this as an opportunity to free up any
-    // spare memory, etc.
-}
-
-bool PluginProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
-{
-  #if JucePlugin_IsMidiEffect
-    juce::ignoreUnused (layouts);
-    return true;
-  #else
-    // This is the place where you check if the layout is supported.
-    // In this template code we only support mono or stereo.
-    if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::mono()
-     && layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
-        return false;
-
-    // This checks if the input layout matches the output layout
-   #if ! JucePlugin_IsSynth
-    if (layouts.getMainOutputChannelSet() != layouts.getMainInputChannelSet())
-        return false;
-   #endif
-
-    return true;
-  #endif
-}
-
-void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
-                                              juce::MidiBuffer& midiMessages)
-{
-    juce::ignoreUnused (midiMessages);
-
     juce::ScopedNoDenormals noDenormals;
-    auto totalNumInputChannels  = getTotalNumInputChannels();
-    auto totalNumOutputChannels = getTotalNumOutputChannels();
 
-    // In case we have more outputs than inputs, this code clears any output
-    // channels that didn't contain input data, (because these aren't
-    // guaranteed to be empty - they may contain garbage).
-    // This is here to avoid people getting screaming feedback
-    // when they first compile a plugin, but obviously you don't need to keep
-    // this code if your algorithm always overwrites all the output channels.
-    for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
-        buffer.clear (i, 0, buffer.getNumSamples());
+    const int numSamples = buffer.getNumSamples();
 
-    // This is the place where you'd normally do the guts of your plugin's
-    // audio processing...
-    // Make sure to reset the state if your inner loop is processing
-    // the samples and the outer loop is handling the channels.
-    // Alternatively, you can process the samples with the channels
-    // interleaved by keeping the same state.
-    for (int channel = 0; channel < totalNumInputChannels; ++channel)
+    buffer.clear();
+    // This plugin generates its own output rather than processing an
+    // incoming signal, and incoming MIDI is currently ignored (reserved
+    // for MIDI chord detection -- see the header comment), so nothing
+    // from the host should reach the output here.
+    midi.clear();
+
+    if (numSamples <= 0)
+        return;
+
+    const int tonicPitchClass = getKeyTonicPitchClass();
+    const auto scaleType = getScaleType();
+    const int octaveOffset = static_cast<int> (apvts.getRawParameterValue ("OCTAVE")->load());
+    const int velocity = static_cast<int> (apvts.getRawParameterValue ("VELOCITY")->load());
+    const float previewGainDb = apvts.getRawParameterValue ("PREVIEW_GAIN")->load();
+
+    // Recomputed fresh every block from the current Key/Scale parameters
+    // rather than cached -- this is cheap (a handful of fixed-size array
+    // writes) and sidesteps needing any cross-thread chord cache at all.
+    const auto shapes = musictheory::buildDiatonicShapes (tonicPitchClass, scaleType);
+
+    keyboardEngine.renderBlockStart (midi, shapes, octaveOffset, velocity, 1);
+
+    bool anyNoteThisBlock = false;
+
+    for (const auto metadata : midi)
     {
-        auto* channelData = buffer.getWritePointer (channel);
-        juce::ignoreUnused (channelData);
-        // ..do something to the data...
+        const auto message = metadata.getMessage();
+
+        if (message.isNoteOn())
+        {
+            previewSynth.noteOn (message.getNoteNumber(), message.getFloatVelocity());
+            anyNoteThisBlock = true;
+        }
+        else if (message.isNoteOff())
+        {
+            previewSynth.noteOff (message.getNoteNumber());
+        }
+    }
+
+    previewSynth.setGain (juce::Decibels::decibelsToGain (previewGainDb));
+    previewSynth.renderBlock (buffer, 0, numSamples);
+
+    float activity = midiActivityForUi.load (std::memory_order_relaxed);
+    activity = anyNoteThisBlock ? 1.0f : activity * 0.90f;
+    midiActivityForUi.store (activity, std::memory_order_relaxed);
+}
+
+void HomeChordsAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
+{
+    auto state = apvts.copyState();
+
+    // Phase 2 groundwork: an empty <PROGRESSION> tree round-trips cleanly
+    // today, and will carry real chord events once the timeline exists.
+    state.appendChild (progression.toValueTree(), nullptr);
+
+    if (auto xml = state.createXml())
+        copyXmlToBinary (*xml, destData);
+}
+
+void HomeChordsAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
+{
+    if (auto xml = getXmlFromBinary (data, sizeInBytes))
+    {
+        if (xml->hasTagName (apvts.state.getType()))
+        {
+            const auto state = juce::ValueTree::fromXml (*xml);
+            apvts.replaceState (state);
+            progression = progression::ProgressionModel::fromValueTree (state.getChildWithName ("PROGRESSION"));
+        }
     }
 }
 
-//==============================================================================
-bool PluginProcessor::hasEditor() const
+juce::AudioProcessorEditor* HomeChordsAudioProcessor::createEditor()
 {
-    return true; // (change this to false if you choose to not supply an editor)
+    return new HomeChordsAudioProcessorEditor (*this);
 }
 
-juce::AudioProcessorEditor* PluginProcessor::createEditor()
-{
-    return new PluginEditor (*this);
-}
-
-//==============================================================================
-void PluginProcessor::getStateInformation (juce::MemoryBlock& destData)
-{
-    // You should use this method to store your parameters in the memory block.
-    // You could do that either as raw data, or use the XML or ValueTree classes
-    // as intermediaries to make it easy to save and load complex data.
-    juce::ignoreUnused (destData);
-}
-
-void PluginProcessor::setStateInformation (const void* data, int sizeInBytes)
-{
-    // You should use this method to restore your parameters from this memory block,
-    // whose contents will have been created by the getStateInformation() call.
-    juce::ignoreUnused (data, sizeInBytes);
-}
-
-//==============================================================================
-// This creates new instances of the plugin..
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
-    return new PluginProcessor();
+    return new HomeChordsAudioProcessor();
 }
