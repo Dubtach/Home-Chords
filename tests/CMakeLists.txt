@@ -31,6 +31,16 @@ CPMAddPackage(
     VERSION 3.7.1
 )
 
+# The `Catch.cmake` module that provides catch_discover_tests() lives in
+# Catch2's own source tree, under extras/. find_package(Catch2) would wire
+# this onto CMAKE_MODULE_PATH automatically via its installed package
+# config, but CPM fetching it from source does not -- so it has to be
+# added by hand, or `include(Catch)` below fails with "include could not
+# find requested file: Catch" (confirmed against a real CI run).
+if(Catch2_SOURCE_DIR)
+    list(APPEND CMAKE_MODULE_PATH "${Catch2_SOURCE_DIR}/extras")
+endif()
+
 add_executable(Tests
     Catch2Main.cpp
     MusicTheoryTests.cpp

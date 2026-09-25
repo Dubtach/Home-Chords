@@ -180,6 +180,25 @@ JUCE/compiler toolchain available, so:
   in `ChordKeyboardEngine.h`/`.cpp` and `PreviewSynth.h`/`.cpp`) but never
   measured — no profiler, no actual audio thread.
 
+### Real CI run log
+
+Unlike everything above, this section tracks what an actual build
+attempt has shown, not just reasoning-through. Updated as real CI output
+comes back.
+
+- **Run 1 (Windows, clang-cl)**: got past MSVC toolchain setup, JUCE
+  configure, `juceaide` build, and CPM fetching Catch2@3.7.1 — all of
+  that is confirmed working. Failed at `tests/CMakeLists.txt:63-64`:
+  `include(Catch)` couldn't find `Catch.cmake`, so `catch_discover_tests`
+  was an unknown command. **Root cause**: CPM fetches Catch2 from source
+  rather than via `find_package`, and only `find_package` wires up
+  `CMAKE_MODULE_PATH` automatically — a well-documented Catch2/CPM
+  interaction, confirmed against Catch2's own docs and a CPM.cmake GitHub
+  issue hitting this exact error with this exact setup. **Fixed**: added
+  `list(APPEND CMAKE_MODULE_PATH "${Catch2_SOURCE_DIR}/extras")` right
+  after the `CPMAddPackage` call. Not yet confirmed by a second run.
+
+
 **First thing to do with this**: `cmake -B Builds && cmake --build
 Builds` and fix whatever the compiler finds. Given the scope of what's
 here, expect *some* build errors on the first attempt — that's normal for
