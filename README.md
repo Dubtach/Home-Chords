@@ -30,6 +30,8 @@ a DAW. Select **C Major**, click into the plugin window, and press `A`.
 ## Layout
 
 ```
+.github/workflows/       CI: build_and_test.yml (macOS + Windows,
+                          ctest, pluginval), adapted from Home-Disto's.
 source/
   PluginProcessor.*      Audio processor: owns the parameters, the
                           keyboard engine, and the preview synth.

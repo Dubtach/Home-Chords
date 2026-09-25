@@ -75,6 +75,38 @@ play-only, matching the spec's own Phase 1 scope exactly — an ADD-mode
 toggle with no timeline behind it would be exactly the kind of dead
 control the spec explicitly prohibits, so it isn't there.
 
+## CI (GitHub Actions)
+
+`.github/workflows/build_and_test.yml` is adapted directly from
+Home-Disto's actual, working file (byte-verified from the uploaded zip,
+not guessed): same macOS + Windows matrix, sccache, `ctest`, and
+`pluginval --strictness-level 10`. Three deliberate differences from the
+Home-Disto/Home-Sidechain version:
+
+1. **No AU/AUv3/CLAP artifact paths** — this plugin's `FORMATS` in
+   `CMakeLists.txt` is `Standalone VST3` only, matching the spec's
+   explicit ask, so the workflow doesn't reference formats that were
+   never asked for and aren't being built.
+2. **No macOS icon-embedding or Windows installer (Inno Setup) steps** —
+   both depend on a `packaging/` folder (an `.icns` and an `.iss` script)
+   that doesn't exist for this plugin yet. Rather than copy steps that
+   would fail on a missing file, both platforms just zip the raw build
+   output. Add `packaging/pamplejuce.icns` + `packaging/installer.iss`
+   and bring the equivalent steps back from Home-Disto's file when you
+   want a real installer.
+3. **`nightly.yml` and `linux-ci-image.yml` were not copied.** Both are
+   Pamplejuce-template-maintainer-only files, not project CI: `nightly.yml`
+   guards itself with `if: github.repository == 'sudara/pamplejuce'` (so
+   it never actually runs on a Home-* repo either) and its own comment
+   says "feel free to delete this file"; `linux-ci-image.yml` builds and
+   pushes a Docker image to `ghcr.io/sudara/...`, a registry namespace
+   Dubtach doesn't own. They're harmless leftovers in the other two repos,
+   not something worth carrying forward.
+
+Same caveat as everything else here: this has not actually been run on
+GitHub — there's no way to trigger a workflow from this environment
+either. Push it and see what the Actions tab says.
+
 ## Not started at all
 
 Everything else in the original spec: the progression timeline itself
@@ -86,8 +118,7 @@ presets (19), transpose-with-relative-key (20), the rhythm engine (21),
 arpeggiator (22), bass/slash-chord system (23), humanization (24), MIDI
 export to a file and MIDI drag-out (28–29), sections (30), the chord edit
 menu (31), undo/redo (32), the full 8-instrument preview picker (26),
-MIDI-input chord detection (34), Scale Lock (35), pluginval (45), and
-GitHub Actions for this specific plugin (46).
+MIDI-input chord detection (34), and Scale Lock (35).
 
 ## Key architectural decisions
 
@@ -174,10 +205,13 @@ DAW at `Builds/HomeChords_artefacts/`.
 
 ## Suggested next steps
 
-1. Build it, fix compiler errors.
+1. Build it locally, fix compiler errors.
 2. Run the tests, fix whatever they turn up.
 3. Confirm the acceptance-test basics work by ear/eye: select C Major,
    press A–J, hear/see the right chords, change Key/Scale, resize the
    window.
-4. From there, Phase 2 (the progression timeline) is the natural next
+4. Push to GitHub and check the Actions tab — this is the first real
+   signal on whether `build_and_test.yml` actually works, Windows
+   included, since nothing here could trigger or watch a run.
+5. From there, Phase 2 (the progression timeline) is the natural next
    piece of work — `ProgressionModel` is ready for it.

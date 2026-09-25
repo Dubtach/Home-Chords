@@ -1,11 +1,12 @@
 name: Pamplejuce
 
 on:
-  workflow_dispatch:
-  workflow_call:
+  workflow_dispatch: # lets you run a build from the UI
+  workflow_call: # lets other workflows call this one
   push:
   pull_request:
 
+# When pushing new commits, cancel any running builds on that branch
 concurrency:
   group: ${{ github.ref }}
   cancel-in-progress: true
@@ -16,18 +17,22 @@ env:
   HOMEBREW_NO_INSTALL_CLEANUP: 1
   SCCACHE_GHA_ENABLED: true
   SCCACHE_CACHE_MULTIARCH: 1
+  IPP_DIR: C:\Program Files (x86)\Intel\oneAPI\ipp\latest\lib\cmake\ipp
 
 defaults:
   run:
     shell: bash
 
+# jobs are run in parallel on different machines
+# all steps run in series
 jobs:
   build_and_test:
+    # don't double run on PRs
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false
+      fail-fast: false # show all errors for each platform (vs. cancel jobs on error)
       matrix:
         include:
           - name: macOS
@@ -37,11 +42,16 @@ jobs:
           - name: Windows
             os: windows-latest
             pluginval-binary: ./pluginval.exe
-            # Use the MSVC compiler exposed by msvc-dev-cmd instead of clang-cl + Ninja
-            extra-flags: -G Ninja -DCMAKE_C_COMPILER=cl.exe -DCMAKE_CXX_COMPILER=cl.exe -DCMAKE_MSVC_WARNING_LEVEL=4
+            extra-flags: -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
 
     steps:
+      # Setup MSVC toolchain and developer command prompt (Windows)
       - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install IPP (Windows)
+        if: (runner.os == 'Windows')
+        run: |
+          nuget install intelipp.static.win-x64 -Version 2026.0.0.712
 
       - name: Install Ninja (Windows)
         if: (runner.os == 'Windows')
@@ -71,57 +81,79 @@ jobs:
 
       - name: Set additional env vars for next steps
         run: |
-          # Define HomeChords names
+          # 1. Hardcode variables from CMakeLists.txt
           PROJECT_NAME="HomeChords"
           PRODUCT_NAME="Home-Chords"
+          # 2. Read the version directly from the file!
           VERSION=$(cat VERSION | tr -d '[:space:]')
 
+          # 3. Add them to GITHUB_ENV
           echo "PROJECT_NAME=$PROJECT_NAME" >> $GITHUB_ENV
           echo "PRODUCT_NAME=$PRODUCT_NAME" >> $GITHUB_ENV
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-          
+
+          # 4. Define paths using the local shell variables
+          # Only VST3 + Standalone -- those are the FORMATS this plugin
+          # actually builds (see CMakeLists.txt). AU/AUv3/CLAP paths from
+          # the Home-Disto/Home-Sidechain version of this file are left
+          # out rather than pointing at artifacts that don't exist.
           ARTIFACTS_PATH=${{ env.BUILD_DIR }}/${PROJECT_NAME}_artefacts/${{ env.BUILD_TYPE }}
           echo "ARTIFACTS_PATH=$ARTIFACTS_PATH" >> $GITHUB_ENV
           echo "VST3_PATH=$ARTIFACTS_PATH/VST3/${PRODUCT_NAME}.vst3" >> $GITHUB_ENV
-          echo "AU_PATH=$ARTIFACTS_PATH/AU/${PRODUCT_NAME}.component" >> $GITHUB_ENV
+          echo "STANDALONE_PATH=$ARTIFACTS_PATH/Standalone/${PRODUCT_NAME}.app" >> $GITHUB_ENV
           echo "ARTIFACT_NAME=${PRODUCT_NAME}-${VERSION}-${{ runner.os }}" >> $GITHUB_ENV
 
       - name: Pluginval
         run: |
-          curl -LO "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_${{ runner.os }}.zip"
+          curl -LO "https://github.com/Tracktion/pluginval/releases/download/v1.0.3/pluginval_${{ runner.os }}.zip"
           7z x pluginval_${{ runner.os }}.zip
           ${{ matrix.pluginval-binary }} --strictness-level 10 --verbose --validate "${{ env.VST3_PATH }}"
 
-      - name: Add Custom Icons (macOS)
-        if: ${{ runner.os == 'macOS' }}
-        run: |
-          sips -i packaging/pamplejuce.icns
-          DeRez -only icns packaging/pamplejuce.icns > /tmp/icons
-          Rez -a /tmp/icons -o "${{ env.VST3_PATH }}/Icon"$'\r'
-          Rez -a /tmp/icons -o "${{ env.AU_PATH }}/Icon"$'\r'
-          SetFile -a C "${{ env.VST3_PATH }}"
-          SetFile -a C "${{ env.AU_PATH }}"
+      # No packaging/ assets exist yet for this plugin (no icon, no Inno
+      # Setup script), so unlike Home-Disto/Home-Sidechain this workflow
+      # doesn't embed a custom macOS icon or build a Windows installer --
+      # it just zips the raw build output for both platforms below. Add
+      # packaging/pamplejuce.icns + packaging/installer.iss and bring back
+      # the equivalent steps from Home-Disto's build_and_test.yml once
+      # those exist.
+
+      # - name: Import Certificates (macOS)
+      #   uses: sudara/basic-macos-keychain-action@v1
+      #   id: keychain
+      #   if: ${{ runner.os == 'macOS'}}
+      #   with:
+      #     dev-id-app-cert: ${{ secrets.DEV_ID_APP_CERT }}
+      #     dev-id-app-password: ${{ secrets.DEV_ID_APP_PASSWORD }}
+      #     dev-id-installer-cert: ${{ secrets.DEV_ID_INSTALLER_CERT }}
+      #     dev-id-installer-password: ${{ secrets.DEV_ID_INSTALLER_PASSWORD }}
+
+      # - name: Codesign (macOS)
+      #   if: ${{ runner.os == 'macOS' }}
+      #   timeout-minutes: 5
+      #   run: |
+      #     # Each plugin must be code signed
+      #     codesign --force --keychain ${{ steps.keychain.outputs.keychain-path }} -s "${{ secrets.DEVELOPER_ID_APPLICATION}}" -v "${{ env.VST3_PATH }}" --deep --strict --options=runtime --timestamp
+      #     codesign --force --keychain ${{ steps.keychain.outputs.keychain-path }} -s "${{ secrets.DEVELOPER_ID_APPLICATION}}" -v "${{ env.STANDALONE_PATH }}" --deep --strict --options=runtime --timestamp
 
       - name: Zip (macOS)
         if: ${{ runner.os == 'macOS' }}
         working-directory: ${{ env.ARTIFACTS_PATH }}
-        run: 7z a -tzip "${{ env.ARTIFACT_NAME }}.zip" "-xr!lib${{ env.PRODUCT_NAME }}_SharedCode.a" .
-
-      - name: Generate Installer
-        if: ${{ runner.os == 'Windows' }}
-        run: |
-          iscc "packaging\installer.iss"
-          mv "packaging/Output/${{ env.ARTIFACT_NAME }}.exe" "${{ env.ARTIFACTS_PATH }}/"
-
-      - name: Upload Exe (Windows)
-        if: ${{ runner.os == 'Windows' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ env.ARTIFACT_NAME }}.exe
-          path: "${{ env.ARTIFACTS_PATH }}/${{ env.ARTIFACT_NAME }}.exe"
+        run: 7z a -tzip "${{ env.ARTIFACT_NAME }}.zip" .
 
       - name: Upload Zip (macOS)
         if: ${{ runner.os == 'macOS' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT_NAME }}.zip
+          path: "${{ env.ARTIFACTS_PATH }}/${{ env.ARTIFACT_NAME }}.zip"
+
+      - name: Zip (Windows)
+        if: ${{ runner.os == 'Windows' }}
+        working-directory: ${{ env.ARTIFACTS_PATH }}
+        run: 7z a -tzip "${{ env.ARTIFACT_NAME }}.zip" .
+
+      - name: Upload Zip (Windows)
+        if: ${{ runner.os == 'Windows' }}
         uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARTIFACT_NAME }}.zip
@@ -140,7 +172,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           prerelease: true
+          # download-artifact puts these files in their own dirs...
+          # Using globs sidesteps having to pass the version around
           files: |
-            */*.exe
             */*.zip
-            */*.dmg
