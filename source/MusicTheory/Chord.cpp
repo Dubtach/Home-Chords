@@ -1,4 +1,5 @@
 #include "Chord.h"
+#include "Scale.h"   // noteName() -- used by chordToneNames() below
 
 namespace musictheory
 {

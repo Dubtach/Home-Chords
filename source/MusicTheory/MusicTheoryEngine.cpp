@@ -1,4 +1,5 @@
 #include "MusicTheoryEngine.h"
+#include <utility>   // std::move
 
 namespace musictheory
 {

@@ -213,9 +213,42 @@ comes back.
   also returns `float` directly (removing a few now-redundant casts).
   The rest of `HomeSeriesUI.h`'s Font usage (`FontOptions`, `withName`,
   `withStyle`) produced no errors in this same run, so it's left as-is.
-  Not yet confirmed by a further run, and the build log available so far
-  doesn't show whether every other file compiles cleanly -- only that
-  these two, and specifically these 4 lines, were the failures reported.
+- **Run 3 (Windows, clang-cl)**: confirmed the Run 2 fix held —
+  `PluginProcessor.cpp` and `PluginEditor.cpp` no longer show the
+  `getStringWidth` errors. New, unrelated failure in `Chord.cpp:80`: `use
+  of undeclared identifier 'noteName'`. **Root cause**: a genuine missing
+  include, not a JUCE API issue this time — `chordToneNames()`'s
+  implementation in `Chord.cpp` calls `noteName()`, which is declared in
+  `Scale.h`, but `Chord.cpp` only included `Chord.h` (which does not
+  itself include `Scale.h`). `MusicTheoryEngine.cpp` includes both
+  headers, which is why the same function worked fine when called from
+  there. **Fixed**: added `#include "Scale.h"` to `Chord.cpp` directly.
+  This run also gave enough visibility to confirm `ChordEvent.cpp` and
+  `ProgressionModel.cpp` compile cleanly (steps 12 and 14, no failures
+  reported), in addition to the files Run 2 already confirmed.
+  **Additional hardening from a full re-audit** (requested explicitly:
+  "fix all other bugs"): traced every non-trivial symbol in every `.cpp`
+  file against that file's own include chain (not what a sibling file
+  happens to include), the same class of check that would have caught
+  both bugs above. Found two places relying on `std::move` being
+  transitively available via `<vector>`/`<algorithm>` rather than
+  including `<utility>` directly (`MusicTheoryEngine.cpp`,
+  `ProgressionModel.cpp`) — both had already compiled successfully in
+  Run 2/3, so this isn't a fix for an active failure, just closing a
+  portability gap before it becomes one. Also read JUCE's full
+  `BREAKING_CHANGES.md` (version 6.1.0 through 8.0.13) end to end and
+  checked every other non-trivial JUCE API used in this codebase
+  (`Slider`/rotary params, `ADSR`, `dsp::IIR`, `AudioProcessorValueTreeState`
+  attachments/listeners, `ValueTree`, the `AudioParameter*Attributes`
+  constructors, `setResizable`/`setResizeLimits` ordering) against it —
+  nothing else on that list matches this codebase, and two choices
+  already made (the `Attributes`-based parameter constructors, calling
+  `setResizable(true, true)` before `setResizeLimits`) turn out to
+  already match what current JUCE requires.
+  Not yet confirmed by a further run. The Tests target (Catch2Main.cpp,
+  MusicTheoryTests.cpp, ProgressionModelTests.cpp) has not been reached
+  by any real build yet — all three runs so far have failed or stopped
+  within the main plugin target.
 
 
 **First thing to do with this**: `cmake -B Builds && cmake --build

@@ -1,5 +1,6 @@
 #include "ProgressionModel.h"
 #include <algorithm>
+#include <utility>   // std::move
 
 namespace progression
 {
