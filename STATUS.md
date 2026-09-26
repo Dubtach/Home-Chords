@@ -196,7 +196,26 @@ comes back.
   interaction, confirmed against Catch2's own docs and a CPM.cmake GitHub
   issue hitting this exact error with this exact setup. **Fixed**: added
   `list(APPEND CMAKE_MODULE_PATH "${Catch2_SOURCE_DIR}/extras")` right
-  after the `CPMAddPackage` call. Not yet confirmed by a second run.
+  after the `CPMAddPackage` call.
+- **Run 2 (Windows, clang-cl)**: configure succeeded; compilation reached
+  `PluginProcessor.cpp` and `PluginEditor.cpp` and failed on both with the
+  same 4 errors, all in `Shared/HomeSeriesUI.h`: `no member named
+  'getStringWidth' in 'juce::Font'`. **Root cause**: this project builds
+  against JUCE's `develop` branch, where `Font::getStringWidth()` has
+  been removed outright (not just deprecated) as part of a font/text
+  metrics overhaul — confirmed against JUCE's own `BREAKING_CHANGES.md`
+  and the current docs.juce.com reference. Worth noting: this exact line
+  used to call `GlyphArrangement::getStringWidthInt()`, which an earlier
+  pass in this project changed to `Font::getStringWidth()` in the name of
+  using a "more certain" API — that change was wrong. **Fixed**: switched
+  all 4 call sites to `juce::TextLayout::getStringWidth (font, text)`,
+  the replacement JUCE's own breaking-changes doc names explicitly, which
+  also returns `float` directly (removing a few now-redundant casts).
+  The rest of `HomeSeriesUI.h`'s Font usage (`FontOptions`, `withName`,
+  `withStyle`) produced no errors in this same run, so it's left as-is.
+  Not yet confirmed by a further run, and the build log available so far
+  doesn't show whether every other file compiles cleanly -- only that
+  these two, and specifically these 4 lines, were the failures reported.
 
 
 **First thing to do with this**: `cmake -B Builds && cmake --build

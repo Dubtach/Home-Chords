@@ -128,7 +128,7 @@ namespace homeUI
         float natural = 0.0f;
 
         for (int i = 0; i < text.length(); ++i)
-            natural += static_cast<float> (f.getStringWidth (text.substring (i, i + 1)));
+            natural += juce::TextLayout::getStringWidth (f, text.substring (i, i + 1));
 
         const float extra = text.length() > 1
             ? (totalWidth - natural) / static_cast<float> (text.length() - 1)
@@ -139,7 +139,7 @@ namespace homeUI
         for (int i = 0; i < text.length(); ++i)
         {
             const auto glyph = text.substring (i, i + 1);
-            const auto width = static_cast<float> (f.getStringWidth (glyph));
+            const auto width = juce::TextLayout::getStringWidth (f, glyph);
             g.drawText (glyph, juce::Rectangle<float> (cursor, y, width + 2.0f, height),
                         juce::Justification::centredLeft, false);
             cursor += width + extra;
@@ -154,8 +154,8 @@ namespace homeUI
         g.setFont (titleFont);
 
         const juce::String head ("Home-");
-        const auto headWidth = static_cast<float> (titleFont.getStringWidth (head));
-        const auto tailWidth = static_cast<float> (titleFont.getStringWidth (tail));
+        const auto headWidth = juce::TextLayout::getStringWidth (titleFont, head);
+        const auto tailWidth = juce::TextLayout::getStringWidth (titleFont, tail);
 
         g.setColour (juce::Colours::black.withAlpha (0.4f));
         g.drawText (head, juce::Rectangle<float> (x + 1.0f, y + 1.0f, headWidth, 28.0f),
