@@ -48,16 +48,26 @@ source/
   Shared/                 HomeSeriesUI.h -- the shared Home-series look
                           (colours, card/well painters, controls),
                           extended with ChordCard for this plugin.
+                          ChordEditPanel.h -- the right-click quality/
+                          extension override popup.
 tests/                    Catch2 unit tests for MusicTheory and
                           ProgressionModel.
 ```
 
-## Controls (Phase 1)
+## Controls (Phase 1 + voice-leading/override additions)
 
 - **Key / Scale** — the two combo boxes in the header.
 - **A S D F G H J** — play the 7 diatonic chords. Also clickable.
+- **Right-click a chord card** — opens a small popup to override that
+  slot's quality (Major/Minor/Diminished/Augmented/Sus2/Sus4) and/or
+  extension (6/7/Maj7/Add9), keeping the same root note. "Reset to
+  Diatonic" clears it. An overridden card shows a small white dot.
+- **Auto Inversion** — on by default. Re-voices each newly-pressed chord
+  into whichever inversion keeps it closest to the last chord played.
 - **Octave** — shifts the whole keyboard up/down.
-- **Velocity** — MIDI velocity for keyboard-triggered notes.
+- **Velocity** — MIDI velocity for keyboard-triggered notes (chords with
+  more notes, e.g. an overridden 7th, get a small automatic compensation
+  so they don't ring louder than a plain triad).
 - **Preview** — internal preview synth volume.
 
 Full detail, architectural reasoning, and an honest list of what isn't

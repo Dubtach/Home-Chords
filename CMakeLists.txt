@@ -65,6 +65,7 @@ target_sources("${PROJECT_NAME}" PRIVATE
     source/Progression/ProgressionModel.cpp
 
     source/Shared/HomeSeriesUI.h
+    source/Shared/ChordEditPanel.h
 )
 
 target_include_directories("${PROJECT_NAME}" PRIVATE source)

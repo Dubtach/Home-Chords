@@ -83,4 +83,74 @@ namespace musictheory
 
         return names;
     }
+
+    RtChordShape buildOverriddenShape (int rootPitchClass, ChordQuality quality, Extension extension) noexcept
+    {
+        RtChordShape shape;
+        shape.rootPitchClass = ((rootPitchClass % 12) + 12) % 12;
+
+        int thirdInterval = 4;
+        int fifthInterval = 7;
+
+        switch (quality)
+        {
+            case ChordQuality::Major:      thirdInterval = 4; fifthInterval = 7; break;
+            case ChordQuality::Minor:      thirdInterval = 3; fifthInterval = 7; break;
+            case ChordQuality::Diminished: thirdInterval = 3; fifthInterval = 6; break;
+            case ChordQuality::Augmented:  thirdInterval = 4; fifthInterval = 8; break;
+            case ChordQuality::Sus2:       thirdInterval = 2; fifthInterval = 7; break;
+            case ChordQuality::Sus4:       thirdInterval = 5; fifthInterval = 7; break;
+            default:                       thirdInterval = 4; fifthInterval = 7; break;   // Other -> Major fallback
+        }
+
+        shape.semitoneOffsets[0] = 0;
+        shape.semitoneOffsets[1] = thirdInterval;
+        shape.semitoneOffsets[2] = fifthInterval;
+        shape.toneCount = 3;
+
+        if (extension != Extension::None)
+        {
+            int extensionInterval = 0;
+
+            switch (extension)
+            {
+                case Extension::Sixth:        extensionInterval = 9;  break;
+                case Extension::MinorSeventh: extensionInterval = 10; break;
+                case Extension::MajorSeventh: extensionInterval = 11; break;
+                case Extension::Ninth:        extensionInterval = 14; break;
+                default:                      extensionInterval = 0;  break;
+            }
+
+            shape.semitoneOffsets[3] = extensionInterval;
+            shape.toneCount = 4;
+        }
+
+        return shape;
+    }
+
+    RtChordShape invertShape (const RtChordShape& rootPositionShape, int inversionIndex) noexcept
+    {
+        RtChordShape result = rootPositionShape;
+
+        if (result.toneCount <= 0)
+            return result;
+
+        inversionIndex = ((inversionIndex % result.toneCount) + result.toneCount) % result.toneCount;
+
+        if (inversionIndex == 0)
+            return result;   // root position -- nothing to rotate
+
+        std::array<int, maxChordTones> rotated {};
+
+        for (int i = 0; i < result.toneCount; ++i)
+        {
+            const int sourceIndex = (i + inversionIndex) % result.toneCount;
+            const bool wrapped = (i + inversionIndex) >= result.toneCount;
+            rotated[static_cast<size_t> (i)] = rootPositionShape.semitoneOffsets[static_cast<size_t> (sourceIndex)]
+                                              + (wrapped ? 12 : 0);
+        }
+
+        result.semitoneOffsets = rotated;
+        return result;
+    }
 }

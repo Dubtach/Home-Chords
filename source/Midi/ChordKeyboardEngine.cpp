@@ -1,4 +1,6 @@
 #include "ChordKeyboardEngine.h"
+#include "../MusicTheory/Chord.h"   // musictheory::invertShape, used by chooseBestInversion
+#include <cmath>
 
 namespace midiengine
 {
@@ -8,10 +10,7 @@ namespace midiengine
         // reference MIDI note, so all 7 slots' roots cluster together in
         // one comfortable register instead of spreading across nearly two
         // octaves (which a naive "always build upward from the pitch
-        // class" placement would do). This is a simple, honest stand-in
-        // for real voice-leading -- the Auto Voicing engine (spec
-        // section 13) that actually minimises movement between
-        // *neighbouring* chords in a progression is Phase 3 work.
+        // class" placement would do).
         int placeNearReference (int pitchClass, int referenceMidiNote) noexcept
         {
             int note = pitchClass + 12 * (referenceMidiNote / 12);
@@ -22,6 +21,18 @@ namespace midiengine
                 note -= 12;
 
             return note;
+        }
+
+        // Treats each simultaneous note as an independent, incoherent
+        // sound source (power sums, not amplitude), so scaling velocity by
+        // roughly sqrt(reference / actual) keeps a 4-note 7th chord from
+        // sounding noticeably louder than a plain 3-note triad just
+        // because it has one more note ringing.
+        int compensateVelocityForToneCount (int velocity, int toneCount) noexcept
+        {
+            constexpr float referenceToneCount = 3.0f;
+            const float scale = std::sqrt (referenceToneCount / static_cast<float> (juce::jmax (1, toneCount)));
+            return juce::jlimit (1, 127, static_cast<int> (std::lround (static_cast<float> (velocity) * scale)));
         }
     }
 
@@ -51,19 +62,59 @@ namespace midiengine
         }
 
         noteRefCount.fill (0);
+        lastPlayedNotes.fill (-1);
+        lastPlayedCount = 0;
     }
 
-    void ChordKeyboardEngine::noteOnSlot (juce::MidiBuffer& midiOut, int slot, const musictheory::RtChordShape& shape,
-                                           int rootOctaveOffset, int velocity, int midiChannel) noexcept
+    int ChordKeyboardEngine::chooseBestInversion (const musictheory::RtChordShape& rootPositionShape, int rootMidiNote) const noexcept
+    {
+        if (lastPlayedCount <= 0 || rootPositionShape.toneCount <= 0)
+            return 0;   // nothing to voice-lead from yet -- root position
+
+        float lastCentroid = 0.0f;
+        for (int i = 0; i < lastPlayedCount; ++i)
+            lastCentroid += static_cast<float> (lastPlayedNotes[static_cast<size_t> (i)]);
+        lastCentroid /= static_cast<float> (lastPlayedCount);
+
+        int bestInversion = 0;
+        float bestDistance = 1.0e9f;
+
+        for (int inversion = 0; inversion < rootPositionShape.toneCount; ++inversion)
+        {
+            const auto candidate = musictheory::invertShape (rootPositionShape, inversion);
+
+            float candidateCentroid = 0.0f;
+            for (int i = 0; i < candidate.toneCount; ++i)
+                candidateCentroid += static_cast<float> (rootMidiNote + candidate.semitoneOffsets[static_cast<size_t> (i)]);
+            candidateCentroid /= static_cast<float> (candidate.toneCount);
+
+            const float distance = std::abs (candidateCentroid - lastCentroid);
+
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                bestInversion = inversion;
+            }
+        }
+
+        return bestInversion;
+    }
+
+    void ChordKeyboardEngine::noteOnSlot (juce::MidiBuffer& midiOut, int slot, const musictheory::RtChordShape& rootPositionShape,
+                                           int rootOctaveOffset, int velocity, int midiChannel, bool autoInversion) noexcept
     {
         const int referenceMidiNote = 60 + rootOctaveOffset * 12;
-        const int rootMidiNote = placeNearReference (shape.rootPitchClass, referenceMidiNote);
-        const auto clampedVelocity = static_cast<juce::uint8> (juce::jlimit (1, 127, velocity));
+        const int rootMidiNote = placeNearReference (rootPositionShape.rootPitchClass, referenceMidiNote);
+
+        const auto shape = autoInversion
+                              ? musictheory::invertShape (rootPositionShape, chooseBestInversion (rootPositionShape, rootMidiNote))
+                              : rootPositionShape;
+
+        const int toneCount = juce::jlimit (0, musictheory::maxChordTones, shape.toneCount);
+        const auto clampedVelocity = static_cast<juce::uint8> (compensateVelocityForToneCount (velocity, toneCount));
 
         auto& voices = heldVoices[static_cast<size_t> (slot)];
         voices.count = 0;
-
-        const int toneCount = juce::jlimit (0, musictheory::maxChordTones, shape.toneCount);
 
         for (int i = 0; i < toneCount; ++i)
         {
@@ -83,6 +134,13 @@ namespace midiengine
 
             ++refCount;
         }
+
+        // Remember what was actually played so the *next* chord (whichever
+        // slot that turns out to be) can voice-lead from it, regardless of
+        // whether this one is still held when that happens.
+        lastPlayedCount = voices.count;
+        for (int i = 0; i < voices.count; ++i)
+            lastPlayedNotes[static_cast<size_t> (i)] = voices.notes[static_cast<size_t> (i)];
     }
 
     void ChordKeyboardEngine::noteOffSlot (juce::MidiBuffer& midiOut, int slot, int midiChannel) noexcept
@@ -115,7 +173,7 @@ namespace midiengine
 
     void ChordKeyboardEngine::renderBlockStart (juce::MidiBuffer& midiOut,
                                                  const musictheory::DiatonicShapeSet& currentShapes,
-                                                 int rootOctaveOffset, int velocity, int midiChannel) noexcept
+                                                 int rootOctaveOffset, int velocity, int midiChannel, bool autoInversion) noexcept
     {
         const auto requested = requestedMask.load (std::memory_order_relaxed);
         const auto changed = requested ^ lastRenderedMask;
@@ -139,7 +197,7 @@ namespace midiengine
                 // chord to play -- pressing it is a no-op, not an error.
                 if (slot < currentShapes.count)
                     noteOnSlot (midiOut, slot, currentShapes.shapes[static_cast<size_t> (slot)],
-                                rootOctaveOffset, velocity, midiChannel);
+                                rootOctaveOffset, velocity, midiChannel, autoInversion);
             }
             else
             {
@@ -178,5 +236,7 @@ namespace midiengine
         requestedMask.store (0, std::memory_order_relaxed);
         lastRenderedMask = 0;
         activeMaskForUi.store (0, std::memory_order_relaxed);
+        lastPlayedNotes.fill (-1);
+        lastPlayedCount = 0;
     }
 }

@@ -26,4 +26,15 @@ namespace musictheory
     // for pentatonic scales, 6 for blues, 7 otherwise), in slot order
     // (slot 0 = A, ... slot 6 = J).
     std::vector<ChordDefinition> buildDiatonicChords (int tonicPitchClass, ScaleType scale);
+
+    // Applies a per-slot override to an already-computed diatonic shape,
+    // keeping the same root. Returns the shape unchanged if the override
+    // isn't active. Real-time safe -- this is what processBlock calls.
+    RtChordShape applyOverride (const RtChordShape& diatonicShape, const SlotOverride& slotOverride) noexcept;
+
+    // Same idea for the rich display type: updates quality, chordName, and
+    // romanNumeral to reflect the override (rootName/rootPitchClass/
+    // scaleDegree stay the same, since an override never changes the
+    // root). Message-thread only -- this is what the editor calls.
+    ChordDefinition applyOverride (const ChordDefinition& diatonicDefinition, const SlotOverride& slotOverride);
 }

@@ -199,4 +199,30 @@ namespace musictheory
             default:                       return "Chord";
         }
     }
+
+    juce::String extensionSuffix (Extension extension)
+    {
+        switch (extension)
+        {
+            case Extension::None:         return "";
+            case Extension::Sixth:        return "6";
+            case Extension::MinorSeventh: return "7";
+            case Extension::MajorSeventh: return "maj7";
+            case Extension::Ninth:        return "add9";
+            default:                      return "";
+        }
+    }
+
+    juce::String extensionLabel (Extension extension)
+    {
+        switch (extension)
+        {
+            case Extension::None:         return "None";
+            case Extension::Sixth:        return "6";
+            case Extension::MinorSeventh: return "7";
+            case Extension::MajorSeventh: return "Maj7";
+            case Extension::Ninth:        return "Add9";
+            default:                      return "None";
+        }
+    }
 }

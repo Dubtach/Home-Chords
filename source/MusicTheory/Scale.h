@@ -58,4 +58,12 @@ namespace musictheory
 
     juce::String chordQualitySuffix (ChordQuality quality);
     juce::String chordQualityLabel (ChordQuality quality);   // "Major", "Minor", "Diminished"...
+
+    // Suffix appended after the quality suffix, e.g. root "F#" + quality
+    // suffix "m" + extension suffix "7" = "F#m7". A pragmatic, simplified
+    // naming scheme rather than full jazz-notation correctness for every
+    // quality+extension combination (e.g. Diminished+MajorSeventh has no
+    // single standard symbol) -- see Chord.h's buildOverriddenShape.
+    juce::String extensionSuffix (Extension extension);
+    juce::String extensionLabel (Extension extension);   // "6", "7", "Maj7", "Add9" -- for UI buttons
 }

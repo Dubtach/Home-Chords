@@ -40,6 +40,19 @@ namespace musictheory
     // Message-thread only.
     juce::StringArray chordToneNames (const RtChordShape& shape, bool useFlats);
 
+    // Builds a chord directly from an explicit quality (+ optional 4th-tone
+    // extension) on a fixed root, bypassing scale-degree stacking entirely.
+    // This is what a per-slot quality/extension override uses: same root
+    // pitch class as the diatonic chord it's replacing, different quality/
+    // extension. Real-time safe.
+    RtChordShape buildOverriddenShape (int rootPitchClass, ChordQuality quality, Extension extension) noexcept;
+
+    // Re-voices a chord shape into a specific inversion by moving the
+    // lowest `inversionIndex` tones up an octave (0 = root position, up to
+    // toneCount-1 = highest inversion). Real-time safe. Out-of-range
+    // indices are wrapped modulo toneCount.
+    RtChordShape invertShape (const RtChordShape& rootPositionShape, int inversionIndex) noexcept;
+
     // One diatonic degree, fully described for display and export.
     // Message-thread only (owns juce::String members).
     struct ChordDefinition

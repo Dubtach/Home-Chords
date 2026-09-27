@@ -34,6 +34,7 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
     {
         chordCards[static_cast<size_t> (i)].onPressStart = [this, i] { processor.setChordSlotHeld (i, true); };
         chordCards[static_cast<size_t> (i)].onPressEnd   = [this, i] { processor.setChordSlotHeld (i, false); };
+        chordCards[static_cast<size_t> (i)].onEditRequested = [this, i] { showChordEditor (i); };
     }
 
     keyBox.addItemList (musictheory::getAllKeyNames(), 1);
@@ -53,6 +54,9 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
     octaveDownButton.onClick = [this] { nudgeOctave (-1); };
     octaveUpButton.onClick   = [this] { nudgeOctave (1); };
 
+    autoInversionCheckbox.setButtonText ("AUTO INVERSION");
+    addAndMakeVisible (autoInversionCheckbox);
+
     addAndMakeVisible (velocityKnob);
     addAndMakeVisible (previewKnob);
     velocityKnob.valueText = [] (double v) { return juce::String (static_cast<int> (v)); };
@@ -62,6 +66,7 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
     scaleAttachment        = std::make_unique<ComboBoxAttachment> (processor.apvts, "SCALE", scaleBox);
     velocityAttachment     = std::make_unique<SliderAttachment> (processor.apvts, "VELOCITY", velocityKnob);
     previewGainAttachment  = std::make_unique<SliderAttachment> (processor.apvts, "PREVIEW_GAIN", previewKnob);
+    autoInversionAttachment = std::make_unique<ButtonAttachment> (processor.apvts, "AUTO_INVERSION", autoInversionCheckbox);
 
     processor.apvts.addParameterListener ("KEY", this);
     processor.apvts.addParameterListener ("SCALE", this);
@@ -134,7 +139,12 @@ void HomeChordsAudioProcessorEditor::resized()
     octaveArea.removeFromRight (4);
     octaveValueWellBounds = octaveArea.toFloat();   // whatever's left in the middle
 
-    footerContent.removeFromLeft (20);
+    footerContent.removeFromLeft (16);
+
+    auto autoInversionArea = footerContent.removeFromLeft (150);
+    autoInversionCheckbox.setBounds (autoInversionArea.withSizeKeepingCentre (autoInversionArea.getWidth(), 22));
+
+    footerContent.removeFromLeft (16);
 
     auto knobArea = footerContent;
     const int knobWidth = knobArea.getWidth() / 2;
@@ -259,6 +269,8 @@ void HomeChordsAudioProcessorEditor::refreshChordCards()
         {
             const auto& chord = chords[static_cast<size_t> (i)];
             card.setContent (trackedKeyCaps[i], chord.romanNumeral, chord.chordName, colourForQuality (chord.quality));
+            card.setHasOverride (processor.getSlotQualityOverride (i) >= 0
+                                  || processor.getSlotExtensionOverride (i) != musictheory::Extension::None);
         }
         else
         {
@@ -286,4 +298,42 @@ void HomeChordsAudioProcessorEditor::releaseAllHeldSlots()
         keyHeldState[static_cast<size_t> (i)] = false;
         processor.setChordSlotHeld (i, false);
     }
+}
+
+void HomeChordsAudioProcessorEditor::showChordEditor (int slot)
+{
+    if (slot < 0 || slot >= currentSlotCount)
+        return;
+
+    const auto chords = processor.getCurrentDiatonicChords();
+
+    if (slot >= static_cast<int> (chords.size()))
+        return;
+
+    const auto rootName = chords[static_cast<size_t> (slot)].rootName;
+    const auto currentQuality = processor.getSlotQualityOverride (slot);
+    const auto currentExtension = processor.getSlotExtensionOverride (slot);
+
+    auto panel = std::make_unique<homeUI::ChordEditPanel> (rootName, currentQuality, currentExtension);
+
+    panel->onQualityChosen = [this, slot] (int quality)
+    {
+        processor.setSlotQualityOverride (slot, quality);
+        refreshChordCards();
+    };
+
+    panel->onExtensionChosen = [this, slot] (musictheory::Extension extension)
+    {
+        processor.setSlotExtensionOverride (slot, extension);
+        refreshChordCards();
+    };
+
+    panel->onReset = [this, slot]
+    {
+        processor.clearSlotOverride (slot);
+        refreshChordCards();
+    };
+
+    const auto targetBounds = chordCards[static_cast<size_t> (slot)].getScreenBounds();
+    juce::CallOutBox::launchAsynchronously (std::move (panel), targetBounds, nullptr);
 }

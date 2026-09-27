@@ -5,13 +5,25 @@ HomeChordsAudioProcessor::HomeChordsAudioProcessor()
     : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "Parameters", createParameters())
 {
+    // Cached once here (message thread, construction time -- string
+    // building is fine) so processBlock never has to build a parameter-ID
+    // string just to read one of these every block.
+    for (int slot = 0; slot < musictheory::maxDiatonicSlots; ++slot)
+    {
+        qualityOverrideParams[static_cast<size_t> (slot)] = apvts.getRawParameterValue (qualityParamId (slot));
+        extensionOverrideParams[static_cast<size_t> (slot)] = apvts.getRawParameterValue (extensionParamId (slot));
+    }
 }
+
+juce::String HomeChordsAudioProcessor::qualityParamId (int slot)   { return "SLOT" + juce::String (slot) + "_QUALITY"; }
+juce::String HomeChordsAudioProcessor::extensionParamId (int slot) { return "SLOT" + juce::String (slot) + "_EXTENSION"; }
 
 juce::AudioProcessorValueTreeState::ParameterLayout HomeChordsAudioProcessor::createParameters()
 {
     using FloatAttributes = juce::AudioParameterFloatAttributes;
     using IntAttributes = juce::AudioParameterIntAttributes;
     using ChoiceAttributes = juce::AudioParameterChoiceAttributes;
+    using BoolAttributes = juce::AudioParameterBoolAttributes;
 
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
@@ -32,6 +44,25 @@ juce::AudioProcessorValueTreeState::ParameterLayout HomeChordsAudioProcessor::cr
         juce::NormalisableRange<float> (-48.0f, 6.0f, 0.1f), -6.0f,
         FloatAttributes{}.withLabel ("dB")));
 
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        "AUTO_INVERSION", "Auto Inversion", true, BoolAttributes{}));
+
+    // Index 0 = "Diatonic" (no override); indices 1-6 map to
+    // ChordQuality::Major..Sus4 (see getSlotQualityOverride/
+    // setSlotQualityOverride for the -1 offset that encodes this).
+    static const juce::StringArray qualityChoices { "Diatonic", "Major", "Minor", "Diminished", "Augmented", "Sus2", "Sus4" };
+    // Index maps 1:1 to the Extension enum (0 = None).
+    static const juce::StringArray extensionChoices { "None", "6", "7", "Maj7", "Add9" };
+
+    for (int slot = 0; slot < musictheory::maxDiatonicSlots; ++slot)
+    {
+        params.push_back (std::make_unique<juce::AudioParameterChoice> (
+            qualityParamId (slot), "Slot " + juce::String (slot + 1) + " Quality", qualityChoices, 0, ChoiceAttributes{}));
+
+        params.push_back (std::make_unique<juce::AudioParameterChoice> (
+            extensionParamId (slot), "Slot " + juce::String (slot + 1) + " Extension", extensionChoices, 0, ChoiceAttributes{}));
+    }
+
     return { params.begin(), params.end() };
 }
 
@@ -48,7 +79,76 @@ musictheory::ScaleType HomeChordsAudioProcessor::getScaleType() const noexcept
 
 std::vector<musictheory::ChordDefinition> HomeChordsAudioProcessor::getCurrentDiatonicChords() const
 {
-    return musictheory::buildDiatonicChords (getKeyTonicPitchClass(), getScaleType());
+    auto chords = musictheory::buildDiatonicChords (getKeyTonicPitchClass(), getScaleType());
+
+    for (int slot = 0; slot < static_cast<int> (chords.size()); ++slot)
+    {
+        musictheory::SlotOverride slotOverride;
+        slotOverride.qualityOverride = getSlotQualityOverride (slot);
+        slotOverride.extension = getSlotExtensionOverride (slot);
+
+        chords[static_cast<size_t> (slot)] = musictheory::applyOverride (chords[static_cast<size_t> (slot)], slotOverride);
+    }
+
+    return chords;
+}
+
+musictheory::RtChordShape HomeChordsAudioProcessor::effectiveShape (int slot, const musictheory::RtChordShape& diatonicShape) const noexcept
+{
+    if (slot < 0 || slot >= musictheory::maxDiatonicSlots)
+        return diatonicShape;
+
+    musictheory::SlotOverride slotOverride;
+    slotOverride.qualityOverride = static_cast<int> (qualityOverrideParams[static_cast<size_t> (slot)]->load()) - 1;
+    slotOverride.extension = static_cast<musictheory::Extension> (
+        static_cast<int> (extensionOverrideParams[static_cast<size_t> (slot)]->load()));
+
+    return musictheory::applyOverride (diatonicShape, slotOverride);
+}
+
+int HomeChordsAudioProcessor::getSlotQualityOverride (int slot) const noexcept
+{
+    if (slot < 0 || slot >= musictheory::maxDiatonicSlots)
+        return -1;
+
+    return static_cast<int> (qualityOverrideParams[static_cast<size_t> (slot)]->load()) - 1;
+}
+
+musictheory::Extension HomeChordsAudioProcessor::getSlotExtensionOverride (int slot) const noexcept
+{
+    if (slot < 0 || slot >= musictheory::maxDiatonicSlots)
+        return musictheory::Extension::None;
+
+    return static_cast<musictheory::Extension> (static_cast<int> (extensionOverrideParams[static_cast<size_t> (slot)]->load()));
+}
+
+void HomeChordsAudioProcessor::setSlotQualityOverride (int slot, int qualityOrMinus1)
+{
+    if (slot < 0 || slot >= musictheory::maxDiatonicSlots)
+        return;
+
+    // -1 = Diatonic (choice index 0), 0..5 = Major..Sus4 (choice index 1..6).
+    const int clampedQuality = juce::jlimit (-1, 5, qualityOrMinus1);
+
+    if (auto* param = dynamic_cast<juce::AudioParameterChoice*> (apvts.getParameter (qualityParamId (slot))))
+        *param = clampedQuality + 1;
+}
+
+void HomeChordsAudioProcessor::setSlotExtensionOverride (int slot, musictheory::Extension extension)
+{
+    if (slot < 0 || slot >= musictheory::maxDiatonicSlots)
+        return;
+
+    const int index = juce::jlimit (0, musictheory::numExtensions - 1, static_cast<int> (extension));
+
+    if (auto* param = dynamic_cast<juce::AudioParameterChoice*> (apvts.getParameter (extensionParamId (slot))))
+        *param = index;
+}
+
+void HomeChordsAudioProcessor::clearSlotOverride (int slot)
+{
+    setSlotQualityOverride (slot, -1);
+    setSlotExtensionOverride (slot, musictheory::Extension::None);
 }
 
 void HomeChordsAudioProcessor::prepareToPlay (double newSampleRate, int samplesPerBlock)
@@ -102,9 +202,21 @@ void HomeChordsAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     // Recomputed fresh every block from the current Key/Scale parameters
     // rather than cached -- this is cheap (a handful of fixed-size array
     // writes) and sidesteps needing any cross-thread chord cache at all.
-    const auto shapes = musictheory::buildDiatonicShapes (tonicPitchClass, scaleType);
+    const auto diatonicShapes = musictheory::buildDiatonicShapes (tonicPitchClass, scaleType);
 
-    keyboardEngine.renderBlockStart (midi, shapes, octaveOffset, velocity, 1);
+    // Apply each slot's quality/extension override (if any) on top of the
+    // diatonic shape -- same root, possibly different tones. This is the
+    // one place processBlock and getCurrentDiatonicChords (the UI's view)
+    // both go through effectiveShape(), so what's heard always matches
+    // what's shown, override or not.
+    musictheory::DiatonicShapeSet finalShapes;
+    finalShapes.count = diatonicShapes.count;
+    for (int slot = 0; slot < diatonicShapes.count; ++slot)
+        finalShapes.shapes[static_cast<size_t> (slot)] = effectiveShape (slot, diatonicShapes.shapes[static_cast<size_t> (slot)]);
+
+    const bool autoInversion = apvts.getRawParameterValue ("AUTO_INVERSION")->load() >= 0.5f;
+
+    keyboardEngine.renderBlockStart (midi, finalShapes, octaveOffset, velocity, 1, autoInversion);
 
     bool anyNoteThisBlock = false;
 

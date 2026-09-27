@@ -10,11 +10,14 @@ before trusting anything else in this file — it explains exactly what
 ## What this pass covers
 
 The original spec is a 52-section, full-featured songwriting plugin —
-realistically weeks of work. This pass builds **Phase 1** (as the spec's
-own section 48 defines it) for real, plus a tested data-model foundation
-for Phase 2. Nothing beyond that is implemented, and nothing is faked:
-there are no placeholder buttons or controls in the UI that don't do
-something real.
+realistically weeks of work. The first pass built **Phase 1** (as the
+spec's own section 48 defines it) plus a tested data-model foundation for
+Phase 2. This second pass adds three things asked for directly once Phase
+1 was confirmed working: real voice-leading (Auto Inversion), a per-slot
+quality/extension override system, and loudness consistency across chords
+of different sizes. Nothing beyond that is implemented, and nothing is
+faked: there are no placeholder buttons or controls in the UI that don't
+do something real.
 
 ## Built and working (Phase 1)
 
@@ -60,6 +63,43 @@ something real.
   `releaseResources()` to send a final Note Off through — this is a
   limitation shared by essentially every JUCE MIDI-generating plugin, not
   something specific to this implementation.
+
+## Built and working (this pass's additions)
+
+- **Auto Inversion** (spec sections 13-14, scoped down — see below): a
+  checkbox, on by default. When on, a newly-pressed chord is re-voiced
+  into whichever inversion (which of its own tones sit an octave up)
+  lands closest to the centroid of the last chord actually played, so
+  chord-to-chord movement is smoother than always jumping to root
+  position. When off, every chord plays in root position (Phase 1's
+  original, only behaviour). Deliberately bounded: it only chooses among
+  a chord's own inversions, never shifts the whole chord by an extra
+  octave, so a long sequence can't wander into an extreme register. This
+  is **not** the full Auto Voicing engine from spec section 13 (no
+  Open/Wide/Piano/Simple modes, no register/min-max controls) — see
+  `ChordKeyboardEngine::chooseBestInversion`.
+- **Per-slot quality/extension override** (spec section 16, plus a scoped
+  version of the chord-edit part of section 31): right-click (or
+  ctrl-click on macOS) any chord card to open a small popup. Pick a
+  quality (Major/Minor/Diminished/Augmented/Sus2/Sus4) and/or an
+  extension (6/7/Maj7/Add9) — the root note never changes, only what's
+  built on it. A small white dot appears on an overridden card. "Reset to
+  Diatonic" clears both back to the plain scale-derived chord. Backed by
+  14 real APVTS parameters (`SLOT0_QUALITY` … `SLOT6_EXTENSION`), so
+  overrides get host automation and state save/restore for free, same as
+  every other parameter. What's *not* covered: sus2/sus4 as an
+  *extension* on top of another quality (they're only offered as
+  standalone qualities, matching how the music theory itself treats
+  them), and full jazz-chord-naming correctness for every combination —
+  see the naming caveat below.
+- **Consistent loudness across chord sizes**: velocity is scaled by
+  roughly `sqrt(3 / toneCount)` before a chord's notes are sent, so a
+  4-note 7th (from the override above) doesn't ring louder than a plain
+  3-note triad just because it has one more note sounding. Applies to the
+  actual MIDI sent to the host, not just the internal preview synth, so a
+  real instrument downstream gets the same balancing. Was a no-op for
+  Phase 1 (every chord was a triad, so the factor was always 1.0) —
+  matters now that extensions exist.
 
 ## Built but not wired up (Phase 2 groundwork)
 
@@ -111,14 +151,28 @@ either. Push it and see what the Actions tab says.
 
 Everything else in the original spec: the progression timeline itself
 (section 8) and all its editing (sections 9–11), tempo/time signature
-(12), the Auto Voicing engine (13) — chords currently play in a fixed
-close-position triad, not voice-led — inversions (14), chord extensions
-beyond plain triads (16), borrowed/color chords (17), suggestions (18),
-presets (19), transpose-with-relative-key (20), the rhythm engine (21),
-arpeggiator (22), bass/slash-chord system (23), humanization (24), MIDI
-export to a file and MIDI drag-out (28–29), sections (30), the chord edit
-menu (31), undo/redo (32), the full 8-instrument preview picker (26),
-MIDI-input chord detection (34), and Scale Lock (35).
+(12), the full Auto Voicing engine with Open/Wide/Piano/Simple modes and
+register controls (13), manual (non-Auto) inversion selection, borrowed/
+color chords (17), suggestions (18), presets (19), transpose-with-
+relative-key (20), the rhythm engine (21), arpeggiator (22), bass/
+slash-chord system (23), humanization (24), MIDI export to a file and
+MIDI drag-out (28–29), sections (30), the rest of the chord edit menu
+beyond quality/extension — Length/Voicing/Octave/Velocity/Bass/Rhythm/
+Arpeggio per chord (31), undo/redo (32), the full 8-instrument preview
+picker (26), MIDI-input chord detection (34), and Scale Lock (35).
+
+**A naming caveat worth knowing about**: `Extension::Sixth` (+9
+semitones) is used both for an added 6th on a major/minor triad *and*,
+combined with a Diminished quality, for what's really a fully-diminished
+7th chord — but the display always shows it as "6" (e.g. "Cdim6"), never
+"dim7", even though "dim7" is the standard name for that specific
+combination. Every other quality+extension combination follows a simple,
+consistent `root + quality suffix + extension suffix` rule rather than
+full jazz-notation correctness (e.g. Diminished+MajorSeventh has no
+single standard symbol at all, so it just gets the same mechanical
+concatenation). The actual *notes* are always correct regardless of
+quality — only the display label can look non-idiomatic on a few unusual
+combinations. See `extensionSuffix`/`extensionLabel` in `Scale.h`.
 
 ## Key architectural decisions
 
@@ -156,6 +210,33 @@ MIDI-input chord detection (34), and Scale Lock (35).
   when this project was generated (a plain zip export of a repo doesn't
   include submodule contents). Functionally equivalent; swap it for the
   real helper when you want to match the other Home-* repos exactly.
+- **Override storage**: per-slot overrides are real `AudioParameterChoice`
+  parameters (14 of them, `SLOT<n>_QUALITY`/`SLOT<n>_EXTENSION`), not raw
+  atomics, specifically so they get host automation and APVTS state
+  save/restore for free rather than needing bespoke serialization. Their
+  string IDs are built by two small static helpers on the processor
+  (`qualityParamId`/`extensionParamId`) used both when declaring the
+  parameters and when caching raw pointers to them at construction time —
+  one source of truth, so the two can never name different parameters by
+  accident. The raw pointers are cached once (construction, message
+  thread) specifically so `processBlock` never has to concatenate a
+  parameter-ID string — and therefore allocate — just to read one of
+  these every block.
+- **Auto Inversion's voice-leading model is a centroid comparison, not
+  full note-to-note matching**: comparing the average pitch of each
+  candidate inversion against the average pitch of the last chord played
+  is a simplification of real voice-leading (which would try to minimise
+  *each individual voice's* movement, not just the chord's overall
+  register), chosen because it's cheap, real-time safe, and handles
+  chords of different sizes (triad to 7th to triad) without needing a
+  notion of which old note "belongs to" which new one.
+- **The edit popup is a `juce::CallOutBox`**, JUCE's standard mechanism
+  for a small contextual popup anchored to the component that opened it,
+  holding a new `homeUI::ChordEditPanel` (`source/Shared/ChordEditPanel.h`).
+  Its quality/extension buttons are a small new radio-style `OptionButton`
+  local to that file, not a port of the sibling repos' `Pill`/
+  `SegmentedSwitch` components (which weren't carried over into this
+  project's `HomeSeriesUI.h` — see the UI kit note above).
 
 ## Testing performed
 
@@ -163,22 +244,37 @@ MIDI-input chord detection (34), and Scale Lock (35).
 was written in a sandboxed environment with no network access and no
 JUCE/compiler toolchain available, so:
 
-- **The C++ has not been compiled.** Not with this JUCE version, not
-  with any compiler. There may be typos, API mismatches (JUCE version
-  differences), or include-order issues that only a real build will
-  surface.
-- **The unit tests have not been run.** `tests/MusicTheoryTests.cpp` and
-  `tests/ProgressionModelTests.cpp` are written and should compile and
-  pass, but "should" is doing real work in that sentence.
-- **What actually was verified**: the chord-stacking algorithm was
-  independently reimplemented in Python and run against the spec's exact
-  test vectors (C Major, G Major, A Natural Minor, A Harmonic Minor, F
-  Major's flat spelling, D Dorian) — every value matched, including the
-  natural-minor-v-is-minor case. The C++ mirrors that verified algorithm,
-  but the Python check does not catch C++-specific mistakes.
+- **The C++ has not been compiled** for anything added in this pass
+  (Auto Inversion, the override system, `ChordEditPanel`, `Checkbox`) —
+  Runs 1-3 below only cover Phase 1. There may be typos, API mismatches,
+  or include-order issues that only a real build will surface, same as
+  every previous pass.
+- **New unit tests were added** for this pass's music-theory logic:
+  `tests/ChordOverrideTests.cpp` covers `buildOverriddenShape` (named
+  chord types like dominant 7th, m7, minor-major 7th, on a fixed root),
+  `invertShape` (root position through every inversion of both a triad
+  and a 4-note 7th chord, including the wrap-around case), and both
+  `applyOverride` overloads (quality-only, extension-only, both at once,
+  and the inactive/passthrough case) — including that overriding a
+  diatonic chord's quality correctly flips its roman-numeral case. Same
+  caveat as always: written and hand-verified, not run.
+- **What actually was verified**: the override/inversion math (dominant
+  7th, m7, minor-major 7th spellings; 1st/2nd inversion of a triad; 3rd
+  inversion of a 7th chord putting the 7th in the bass) was independently
+  reimplemented in Python and cross-checked before being committed to C++
+  — same discipline as the original chord-stacking verification. All
+  values matched. The Python check does not catch C++-specific mistakes.
+- **API verification this pass**: two JUCE APIs new to this pass
+  (`juce::Button::setButtonText`/`getButtonText` as base-class methods,
+  and `juce::CallOutBox::launchAsynchronously`'s exact signature) were
+  checked against current docs.juce.com/master before use, rather than
+  assumed — directly because of what Runs 2-3 below turned up about
+  trusting memory over verification for this specific JUCE branch.
 - **Real-time safety** was reasoned through carefully (see the comments
-  in `ChordKeyboardEngine.h`/`.cpp` and `PreviewSynth.h`/`.cpp`) but never
-  measured — no profiler, no actual audio thread.
+  in `ChordKeyboardEngine.h`/`.cpp`) but never measured — no profiler, no
+  actual audio thread. The new velocity-compensation math
+  (`compensateVelocityForToneCount`) is a handful of float operations, no
+  allocation, same real-time-safety class as everything around it.
 
 ### Real CI run log
 
@@ -249,7 +345,11 @@ comes back.
   MusicTheoryTests.cpp, ProgressionModelTests.cpp) has not been reached
   by any real build yet — all three runs so far have failed or stopped
   within the main plugin target.
-
+- **Run 4 and beyond**: not yet attempted. Everything from "this pass's
+  additions" above (Auto Inversion, the 14 override parameters,
+  `ChordEditPanel`, `Checkbox`, `ChordOverrideTests.cpp`) is new since Run
+  3 and has not been through a real build at all. Expect this to be where
+  the next round of real compiler feedback lands.
 
 **First thing to do with this**: `cmake -B Builds && cmake --build
 Builds` and fix whatever the compiler finds. Given the scope of what's
@@ -276,13 +376,16 @@ DAW at `Builds/HomeChords_artefacts/`.
 
 ## Suggested next steps
 
-1. Build it locally, fix compiler errors.
+1. Build it locally, fix compiler errors — this pass's new code
+   (Auto Inversion, overrides, `ChordEditPanel`) hasn't been built at all
+   yet, so treat it with at least as much suspicion as Phase 1 got.
 2. Run the tests, fix whatever they turn up.
-3. Confirm the acceptance-test basics work by ear/eye: select C Major,
-   press A–J, hear/see the right chords, change Key/Scale, resize the
-   window.
-4. Push to GitHub and check the Actions tab — this is the first real
-   signal on whether `build_and_test.yml` actually works, Windows
-   included, since nothing here could trigger or watch a run.
+3. Confirm by ear/eye: select C Major, press A–J, hear/see the right
+   chords; right-click a card, change its quality/extension, confirm the
+   root note doesn't move and the card gets its override dot; toggle Auto
+   Inversion off and on and listen for the difference; hold a triad then
+   an overridden 7th chord back to back and check they're not obviously
+   different in loudness.
+4. Push to GitHub and check the Actions tab.
 5. From there, Phase 2 (the progression timeline) is the natural next
    piece of work — `ProgressionModel` is ready for it.

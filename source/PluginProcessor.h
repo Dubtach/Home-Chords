@@ -62,8 +62,23 @@ public:
     musictheory::ScaleType getScaleType() const noexcept;
 
     // Message-thread only, allocates -- call when Key/Scale changes, not
-    // once per frame.
+    // once per frame. Returns the *effective* chord for each slot: the
+    // plain diatonic chord, unless that slot has a quality/extension
+    // override, in which case the override is already applied.
     std::vector<musictheory::ChordDefinition> getCurrentDiatonicChords() const;
+
+    // ---- Per-slot quality/extension overrides ---------------------------
+    //
+    // Backed by real APVTS parameters (SLOT<n>_QUALITY / SLOT<n>_EXTENSION),
+    // so they get host automation and state save/restore for free, same as
+    // every other parameter here. -1 for quality means "no override, use
+    // the diatonic quality"; Extension::None (0) means "no added tone".
+
+    int getSlotQualityOverride (int slot) const noexcept;
+    musictheory::Extension getSlotExtensionOverride (int slot) const noexcept;
+    void setSlotQualityOverride (int slot, int qualityOrMinus1);
+    void setSlotExtensionOverride (int slot, musictheory::Extension extension);
+    void clearSlotOverride (int slot);
 
     // UI polling (message-thread Timer): which slots are currently
     // sounding, and a decaying MIDI-out activity level.
@@ -77,11 +92,28 @@ public:
 private:
     juce::AudioProcessorValueTreeState::ParameterLayout createParameters();
 
+    // Per-slot parameter IDs, e.g. "SLOT3_QUALITY" / "SLOT3_EXTENSION".
+    // Used both when declaring the parameters and when caching pointers to
+    // them below -- one place, so the two can never drift apart.
+    static juce::String qualityParamId (int slot);
+    static juce::String extensionParamId (int slot);
+
+    // Computes the shape actually heard for one slot: the diatonic shape
+    // with that slot's override (if any) applied. Real-time safe -- this
+    // is the single place processBlock gets a slot's final shape from.
+    musictheory::RtChordShape effectiveShape (int slot, const musictheory::RtChordShape& diatonicShape) const noexcept;
+
     midiengine::ChordKeyboardEngine keyboardEngine;
     preview::PreviewSynth previewSynth;
 
     double sampleRate = 44100.0;
     std::atomic<float> midiActivityForUi { 0.0f };
+
+    // Raw pointers into apvts's own storage, cached once at construction so
+    // processBlock never has to build a parameter-ID string (which would
+    // allocate) just to read one of these every block.
+    std::array<std::atomic<float>*, musictheory::maxDiatonicSlots> qualityOverrideParams {};
+    std::array<std::atomic<float>*, musictheory::maxDiatonicSlots> extensionOverrideParams {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HomeChordsAudioProcessor)
 };

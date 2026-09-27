@@ -44,6 +44,7 @@ endif()
 add_executable(Tests
     Catch2Main.cpp
     MusicTheoryTests.cpp
+    ChordOverrideTests.cpp
     ProgressionModelTests.cpp
 )
 

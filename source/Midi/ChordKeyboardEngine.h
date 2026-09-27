@@ -61,10 +61,14 @@ namespace midiengine
         // slot that changed. All notes land at sample 0 of the block --
         // keyboard input has no sample-accurate host timestamp to honour
         // anyway, so this is a deliberate, simple, and safe choice rather
-        // than a compromise around a real constraint.
+        // than a compromise around a real constraint. When `autoInversion`
+        // is true, a newly-pressed chord is re-voiced into whichever
+        // inversion keeps it closest to the last chord that was played
+        // (see chooseBestInversion); when false, every chord plays in
+        // root position, as Phase 1 always did.
         void renderBlockStart (juce::MidiBuffer& midiOut,
                                 const musictheory::DiatonicShapeSet& currentShapes,
-                                int rootOctaveOffset, int velocity, int midiChannel) noexcept;
+                                int rootOctaveOffset, int velocity, int midiChannel, bool autoInversion) noexcept;
 
         // Force every currently-sounding note off immediately (block
         // start/stop, prepareToPlay, or the editor losing keyboard focus
@@ -92,9 +96,25 @@ namespace midiengine
         std::array<SlotVoices, numSlots> heldVoices {};             // audio-thread-only
         std::array<int, midiNoteCount> noteRefCount {};             // audio-thread-only
 
-        void noteOnSlot (juce::MidiBuffer& midiOut, int slot, const musictheory::RtChordShape& shape,
-                          int rootOctaveOffset, int velocity, int midiChannel) noexcept;
+        // The actual MIDI notes of the most recently *triggered* chord
+        // (any slot, whether or not it's still held), used purely as the
+        // voice-leading reference point for whichever chord gets pressed
+        // next. Audio-thread-only, like everything else in this section.
+        std::array<int, musictheory::maxChordTones> lastPlayedNotes {};
+        int lastPlayedCount = 0;
+
+        void noteOnSlot (juce::MidiBuffer& midiOut, int slot, const musictheory::RtChordShape& rootPositionShape,
+                          int rootOctaveOffset, int velocity, int midiChannel, bool autoInversion) noexcept;
         void noteOffSlot (juce::MidiBuffer& midiOut, int slot, int midiChannel) noexcept;
+
+        // Evaluates every inversion of `rootPositionShape` (already placed
+        // with its root at `rootMidiNote`) and returns whichever one's
+        // centroid lands closest to the last chord's centroid -- a simple,
+        // deliberately bounded stand-in for full voice-leading: it never
+        // considers shifting the whole chord by an extra octave, only
+        // which of its own tones sit an octave up, so it can't wander into
+        // an extreme register even after a long chord sequence.
+        int chooseBestInversion (const musictheory::RtChordShape& rootPositionShape, int rootMidiNote) const noexcept;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChordKeyboardEngine)
     };

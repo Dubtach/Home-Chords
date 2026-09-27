@@ -352,6 +352,54 @@ namespace homeUI
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Knob)
     };
 
+    // A small labelled on/off tile -- a tick on a dark square when on,
+    // empty when off, with a text label (set via setButtonText()) to its
+    // right. Used for Auto Inversion; general-purpose beyond that.
+    class Checkbox : public juce::Button
+    {
+    public:
+        explicit Checkbox (juce::Colour accentColour = cyan)
+            : juce::Button ("Checkbox"), accent (accentColour)
+        {
+            setClickingTogglesState (true);
+        }
+
+        void setAccent (juce::Colour c) { accent = c; repaint(); }
+
+        void paintButton (juce::Graphics& g, bool over, bool /*down*/) override
+        {
+            auto bounds = getLocalBounds().toFloat();
+            const auto box = bounds.removeFromLeft (bounds.getHeight()).reduced (2.0f);
+            const bool on = getToggleState();
+
+            g.setColour (juce::Colours::black.withAlpha (0.4f));
+            g.fillRoundedRectangle (box, 3.0f);
+            g.setColour ((on ? accent : juce::Colours::white).withAlpha (on ? 0.9f : (over ? 0.5f : 0.3f)));
+            g.drawRoundedRectangle (box, 3.0f, 1.2f);
+
+            if (on)
+            {
+                juce::Path tick;
+                tick.startNewSubPath (box.getX() + box.getWidth() * 0.22f, box.getCentreY());
+                tick.lineTo (box.getX() + box.getWidth() * 0.42f, box.getBottom() - box.getHeight() * 0.22f);
+                tick.lineTo (box.getRight() - box.getWidth() * 0.18f, box.getY() + box.getHeight() * 0.22f);
+
+                g.setColour (accent);
+                g.strokePath (tick, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            }
+
+            auto textArea = bounds.withTrimmedLeft (6.0f);
+            g.setFont (font (10.5f, false));
+            g.setColour (juce::Colours::white.withAlpha (0.75f));
+            g.drawText (getButtonText(), textArea, juce::Justification::centredLeft, false);
+        }
+
+    private:
+        juce::Colour accent;
+
+        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Checkbox)
+    };
+
     // =========================================================================
     // ChordCard -- new for Home-Chords.
     //
@@ -388,6 +436,18 @@ namespace homeUI
 
         bool hasChord() const noexcept { return nameText.isNotEmpty(); }
 
+        // Shows a small dot in the corner when this slot has a quality/
+        // extension override active, so an edited slot reads differently
+        // from a plain diatonic one at a glance.
+        void setHasOverride (bool overridden) noexcept
+        {
+            if (hasOverrideFlag != overridden)
+            {
+                hasOverrideFlag = overridden;
+                repaint();
+            }
+        }
+
         // 0 = at rest, 1 = fully lit. The editor's Timer drives this from a
         // value that jumps to 1 on press and decays on release, so the
         // card fades out instead of switching off instantly.
@@ -401,7 +461,11 @@ namespace homeUI
             }
         }
 
-        std::function<void()> onPressStart, onPressEnd;
+        // onPressStart/onPressEnd: left click/release, auditions the chord.
+        // onEditRequested: right click (or ctrl-click on macOS), opens the
+        // quality/extension editor -- doesn't also fire onPressStart, so a
+        // right click never sounds the chord.
+        std::function<void()> onPressStart, onPressEnd, onEditRequested;
 
         void paint (juce::Graphics& g) override
         {
@@ -430,21 +494,41 @@ namespace homeUI
             g.fillRoundedRectangle (keyChip, 3.0f);
             drawCardText (g, keyCap, keyChip, 10.0f);
 
+            if (hasOverrideFlag)
+            {
+                const auto dot = juce::Rectangle<float> (lifted.getRight() - 12.0f, lifted.getY() + 5.0f, 5.0f, 5.0f);
+                g.setColour (juce::Colours::white.withAlpha (0.85f));
+                g.fillEllipse (dot);
+            }
+
             content.removeFromTop (2.0f);
             auto romanRow = content.removeFromTop (content.getHeight() * 0.58f);
             drawCardText (g, romanText, romanRow, juce::jmin (25.0f, romanRow.getHeight() * 0.75f));
             drawCardText (g, nameText, content, 12.5f);
         }
 
-        void mouseDown (const juce::MouseEvent&) override
+        void mouseDown (const juce::MouseEvent& event) override
         {
-            if (hasChord() && onPressStart != nullptr)
+            if (! hasChord())
+                return;
+
+            if (event.mods.isPopupMenu())
+            {
+                if (onEditRequested != nullptr)
+                    onEditRequested();
+            }
+            else if (onPressStart != nullptr)
+            {
                 onPressStart();
+            }
         }
 
-        void mouseUp (const juce::MouseEvent&) override
+        void mouseUp (const juce::MouseEvent& event) override
         {
-            if (hasChord() && onPressEnd != nullptr)
+            // A right-click's mouseUp shouldn't stop a chord it never
+            // started -- only follow through for the same button that
+            // began the press.
+            if (hasChord() && ! event.mods.isPopupMenu() && onPressEnd != nullptr)
                 onPressEnd();
         }
 
@@ -452,6 +536,7 @@ namespace homeUI
         juce::String keyCap, romanText, nameText;
         juce::Colour accent = cyan;
         float lit = 0.0f;
+        bool hasOverrideFlag = false;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChordCard)
     };

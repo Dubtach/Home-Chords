@@ -46,6 +46,24 @@ namespace musictheory
         Other   // fallback for non-tertian stacks (can occur on some pentatonic/blues degrees)
     };
 
+    // An optional 4th tone added on top of a triad. Deliberately decoupled
+    // from ChordQuality (rather than named chord types like "dom7"/"maj7")
+    // so any quality can combine with any extension -- e.g. Major+MinorSeventh
+    // is a dominant 7th, Minor+MinorSeventh is a plain m7, Minor+MajorSeventh
+    // is a minor-major 7th. See Scale.h's extensionSuffix/extensionLabel for
+    // how a combination gets named.
+    enum class Extension
+    {
+        None = 0,
+        Sixth,          // +9 semitones
+        MinorSeventh,   // +10 semitones
+        MajorSeventh,   // +11 semitones
+        Ninth,          // +14 semitones (an added 9th, no 7th -- "add9", not a full 9th chord)
+        count
+    };
+
+    inline constexpr int numExtensions = static_cast<int> (Extension::count);
+
     // The keyboard only ever drives 7 slots (A S D F G H J). Scales with
     // fewer than 7 degrees (pentatonic, blues) simply leave the remaining
     // slots inactive -- see MusicTheoryEngine::buildDiatonicShapes.
@@ -70,5 +88,17 @@ namespace musictheory
     {
         std::array<RtChordShape, maxDiatonicSlots> shapes {};
         int count = 0;
+    };
+
+    // A user override for one keyboard slot: replace the diatonic quality
+    // and/or add a 4th-tone extension, keeping the same root note. Both
+    // parts are independent -- overriding just the extension keeps the
+    // diatonic quality, overriding just the quality keeps it a plain triad.
+    struct SlotOverride
+    {
+        int qualityOverride = -1;             // -1 = none, else a ChordQuality enum value
+        Extension extension = Extension::None;
+
+        bool isActive() const noexcept { return qualityOverride >= 0 || extension != Extension::None; }
     };
 }

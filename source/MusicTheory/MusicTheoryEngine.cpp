@@ -54,4 +54,45 @@ namespace musictheory
 
         return result;
     }
+
+    RtChordShape applyOverride (const RtChordShape& diatonicShape, const SlotOverride& slotOverride) noexcept
+    {
+        if (! slotOverride.isActive())
+            return diatonicShape;
+
+        ChordQuality quality;
+
+        if (slotOverride.qualityOverride >= 0)
+        {
+            quality = static_cast<ChordQuality> (slotOverride.qualityOverride);
+        }
+        else
+        {
+            // Extension-only override: keep whatever quality the diatonic
+            // triad already had.
+            const int lower = diatonicShape.semitoneOffsets[1];
+            const int upper = diatonicShape.semitoneOffsets[2] - diatonicShape.semitoneOffsets[1];
+            quality = classifyTriad (lower, upper);
+        }
+
+        return buildOverriddenShape (diatonicShape.rootPitchClass, quality, slotOverride.extension);
+    }
+
+    ChordDefinition applyOverride (const ChordDefinition& diatonicDefinition, const SlotOverride& slotOverride)
+    {
+        if (! slotOverride.isActive())
+            return diatonicDefinition;
+
+        ChordDefinition result = diatonicDefinition;
+        const auto quality = slotOverride.qualityOverride >= 0
+                                ? static_cast<ChordQuality> (slotOverride.qualityOverride)
+                                : diatonicDefinition.quality;
+
+        result.quality = quality;
+        result.shape = buildOverriddenShape (diatonicDefinition.rootPitchClass, quality, slotOverride.extension);
+        result.chordName = diatonicDefinition.rootName + chordQualitySuffix (quality) + extensionSuffix (slotOverride.extension);
+        result.romanNumeral = romanNumeralFor (diatonicDefinition.scaleDegree, quality) + extensionSuffix (slotOverride.extension);
+
+        return result;
+    }
 }

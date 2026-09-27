@@ -3,11 +3,13 @@
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 #include "Shared/HomeSeriesUI.h"
+#include "Shared/ChordEditPanel.h"
 
 // =============================================================================
-// Home-Chords editor -- Phase 1: brand header with a Key/Scale picker and a
-// MIDI-out activity lamp, the 7-slot chord row, and a footer strip for
-// Octave/Velocity/Preview Volume. No progression timeline yet (Phase 2).
+// Home-Chords editor. Brand header with a Key/Scale picker and a MIDI-out
+// activity lamp, the 7-slot chord row, and a footer strip for Auto
+// Inversion / Octave / Velocity / Preview Volume. No progression timeline
+// yet (Phase 2).
 //
 // Keyboard handling: A S D F G H J are polled every frame against
 // juce::KeyPress::isKeyCurrentlyDown rather than handled as discrete
@@ -17,6 +19,10 @@
 // text entry, JUCE's normal focus routing sends its key events to that
 // control first and this editor's keyStateChanged simply never fires
 // while it has focus -- no special-casing needed here for that to work.
+//
+// Right-clicking a chord card opens a small quality/extension editor for
+// that slot (see showChordEditor) -- left click still auditions the chord,
+// per ChordCard's own left/right disambiguation.
 // =============================================================================
 
 class HomeChordsAudioProcessorEditor : public juce::AudioProcessorEditor,
@@ -46,6 +52,7 @@ private:
     int currentSlotCount = 7;
 
     juce::ComboBox keyBox, scaleBox;
+    homeUI::Checkbox autoInversionCheckbox { homeUI::green };
     homeUI::ChevronButton octaveDownButton { homeUI::ChevronButton::left, homeUI::cyan };
     homeUI::ChevronButton octaveUpButton   { homeUI::ChevronButton::right, homeUI::cyan };
     homeUI::Knob velocityKnob { "VELOCITY", homeUI::green };
@@ -53,9 +60,11 @@ private:
 
     using ComboBoxAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
     using SliderAttachment   = juce::AudioProcessorValueTreeState::SliderAttachment;
+    using ButtonAttachment   = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
     std::unique_ptr<ComboBoxAttachment> keyAttachment, scaleAttachment;
     std::unique_ptr<SliderAttachment> velocityAttachment, previewGainAttachment;
+    std::unique_ptr<ButtonAttachment> autoInversionAttachment;
 
     juce::Rectangle<float> brandBounds, lampBounds, footerCardBounds, octaveLabelBounds, octaveValueWellBounds;
 
@@ -69,6 +78,7 @@ private:
     void refreshChordCards();
     void nudgeOctave (int delta);
     void releaseAllHeldSlots();
+    void showChordEditor (int slot);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HomeChordsAudioProcessorEditor)
 };
