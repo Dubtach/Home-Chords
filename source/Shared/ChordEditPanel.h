@@ -2,6 +2,7 @@
 
 #include "HomeSeriesUI.h"
 #include "../MusicTheory/MusicTheoryTypes.h"
+#include <functional>
 #include <memory>
 #include <vector>
 

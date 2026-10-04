@@ -3,358 +3,386 @@
 This document is the honest account of what's actually built, what's
 scaffolded but inert, and what hasn't been started, per the original
 spec's own rule: *"do not claim something works unless it has actually
-been implemented and tested."* Read the **Testing performed** section
-before trusting anything else in this file — it explains exactly what
-"tested" does and doesn't mean here.
+been implemented and tested."* Read **Testing performed** before trusting
+anything else here — it explains exactly what "tested" does and doesn't
+mean, and which parts of this pass are higher-risk than others.
 
 ## What this pass covers
 
-The original spec is a 52-section, full-featured songwriting plugin —
-realistically weeks of work. The first pass built **Phase 1** (as the
-spec's own section 48 defines it) plus a tested data-model foundation for
-Phase 2. This second pass adds three things asked for directly once Phase
-1 was confirmed working: real voice-leading (Auto Inversion), a per-slot
-quality/extension override system, and loudness consistency across chords
-of different sizes. Nothing beyond that is implemented, and nothing is
-faked: there are no placeholder buttons or controls in the UI that don't
-do something real.
+Three passes so far:
+1. **Phase 1**: Key/Scale-driven algorithmic diatonic chords, A–J
+   keyboard → real MIDI, a preview synth, a resizable UI, stuck-note-safe
+   note handling. Confirmed working against a real screenshot (E Major,
+   every one of the 7 chords correct).
+2. **Voice-leading pass**: Auto Inversion (centroid-based voice-leading),
+   per-slot quality/extension override (right-click a card), loudness
+   compensation across chord sizes.
+3. **This pass**: a reported octave bug found and fixed; the progression
+   timeline (drag/resize/move/delete/duplicate, Play/Stop/Loop, its own
+   internal transport); a rhythm engine (8 patterns); an arpeggiator (4
+   modes); a bass system (4 modes + custom); 5 scale-aware presets;
+   undo/redo for every timeline edit; numeric-key chord triggering with a
+   Letters/Numbers/Both setting; a plugin-wide sharp/flat spelling
+   preference; external MIDI keyboard input (white keys = scale degrees
+   1–7).
 
-## Built and working (Phase 1)
+This third pass is, by a wide margin, the largest and riskiest single
+pass of the project. Said plainly: **this is the first time in this
+project I'm shipping something I have real, specific reservations
+about** — not from carelessness, but because sample-accurate sequencing
+is genuinely hard to get right without a compiler, and this pass had to
+build it anyway. The reservations are named specifically throughout this
+document, in "Known scope limits" and "Testing performed," rather than
+hidden behind a blanket disclaimer.
 
-- **Key**: all 12 chromatic roots (spec section 4).
-- **Scale**: all 12 scales/modes listed in spec section 4 — Major,
-  Natural/Harmonic/Melodic Minor, the 5 other church modes, Major/Minor
-  Pentatonic, Blues.
-- **Algorithmic diatonic chord generation** (spec section 5): chords are
-  derived from Key+Scale by actually stacking scale tones, not looked up
-  from a hardcoded table. Verified against the spec's own C Major, G
-  Major, and A Minor test vectors, including the subtle case the spec
-  specifically calls out — natural minor's **v is genuinely minor**, not
-  forced into a major V.
-- **Enharmonic spelling**: keys that conventionally read with flats (F,
-  Bb, Eb, Ab, Db) spell that way; everything else spells with sharps.
-  Modes are spelled via their parent major scale's bias.
-- **A–J keyboard → real MIDI** (spec sections 6, 27): pressing A–J sends
-  real Note On, releasing sends real Note Off. Real-time safe: no
-  allocation in `processBlock`, edge-triggered from an atomic mask,
-  per-note reference counting so two chords sharing a MIDI note number
-  can't cause a premature or duplicate Note Off. See
-  `source/Midi/ChordKeyboardEngine.h` for the detailed reasoning.
-- **Internal preview synth** (spec section 26, scoped down — see below):
-  a single clean voice, so the plugin is audible pressing A with nothing
-  downstream listening to the MIDI.
-  **Not** the full Piano/EP/Organ/Synth/Pad/Pluck/Strings/Bass picker.
-- **Mouse click on a chord card** also plays/stops the chord, through the
-  same code path as the keyboard (not a separate, half-wired feature).
-- **Visual feedback** (spec section 38): chord cards highlight and fade
-  on press/release; a MIDI-out activity lamp in the header. Colour
-  follows chord quality (major/minor/diminished/etc.), not an arbitrary
-  per-slot rainbow.
-- **Resizable editor** (spec section 36) with a proportional layout, not
-  a fixed canvas scaled up — the chord row actually reflows.
-- **State persistence** for everything that exists so far: Key, Scale,
-  Octave, Velocity, Preview Volume round-trip through
-  `getStateInformation`/`setStateInformation` via the standard APVTS XML
-  pattern.
-- **Stuck-note handling**: reference-counted note-offs (see above), plus
-  the editor releases every held slot when it loses OS focus or is
-  closed. The one gap: if a host hard-kills the plugin process while a
-  key is physically held, there's no `MidiBuffer` available in
-  `releaseResources()` to send a final Note Off through — this is a
-  limitation shared by essentially every JUCE MIDI-generating plugin, not
-  something specific to this implementation.
+## The octave bug — found, fixed, verified
 
-## Built and working (this pass's additions)
+You reported: chords felt like they dropped an octave partway through
+the row ("123 then 4567"). Confirmed exactly: the old placement logic
+snapped each chord's root to *its own* nearest octave independently, so
+in C Major, G/A/B's nearest-reference octave landed a full step below
+C/D/E/F's, even though musically they're the *next* notes up the scale.
 
-- **Auto Inversion** (spec sections 13-14, scoped down — see below): a
-  checkbox, on by default. When on, a newly-pressed chord is re-voiced
-  into whichever inversion (which of its own tones sit an octave up)
-  lands closest to the centroid of the last chord actually played, so
-  chord-to-chord movement is smoother than always jumping to root
-  position. When off, every chord plays in root position (Phase 1's
-  original, only behaviour). Deliberately bounded: it only chooses among
-  a chord's own inversions, never shifts the whole chord by an extra
-  octave, so a long sequence can't wander into an extreme register. This
-  is **not** the full Auto Voicing engine from spec section 13 (no
-  Open/Wide/Piano/Simple modes, no register/min-max controls) — see
-  `ChordKeyboardEngine::chooseBestInversion`.
-- **Per-slot quality/extension override** (spec section 16, plus a scoped
-  version of the chord-edit part of section 31): right-click (or
-  ctrl-click on macOS) any chord card to open a small popup. Pick a
-  quality (Major/Minor/Diminished/Augmented/Sus2/Sus4) and/or an
-  extension (6/7/Maj7/Add9) — the root note never changes, only what's
-  built on it. A small white dot appears on an overridden card. "Reset to
-  Diatonic" clears both back to the plain scale-derived chord. Backed by
-  14 real APVTS parameters (`SLOT0_QUALITY` … `SLOT6_EXTENSION`), so
-  overrides get host automation and state save/restore for free, same as
-  every other parameter. What's *not* covered: sus2/sus4 as an
-  *extension* on top of another quality (they're only offered as
-  standalone qualities, matching how the music theory itself treats
-  them), and full jazz-chord-naming correctness for every combination —
-  see the naming caveat below.
-- **Consistent loudness across chord sizes**: velocity is scaled by
-  roughly `sqrt(3 / toneCount)` before a chord's notes are sent, so a
-  4-note 7th (from the override above) doesn't ring louder than a plain
-  3-note triad just because it has one more note sounding. Applies to the
-  actual MIDI sent to the host, not just the internal preview synth, so a
-  real instrument downstream gets the same balancing. Was a no-op for
-  Phase 1 (every chord was a triad, so the factor was always 1.0) —
-  matters now that extensions exist.
+**Fixed** by placing every slot's root by its actual semitone distance
+*above* a single shared anchor (slot 0's root — the scale tonic, which an
+override never changes) rather than each slot snapping independently.
+Verified in Python against both the original bug (reproduced exactly: C
+D E F at MIDI 60/62/64/65, then G A B dropping to 55/57/59) and the fix
+(C through B ascending smoothly, 60 through 71, checked in multiple
+keys including enharmonically awkward ones like B major). See
+`MusicTheory/Voicing.h`'s `placeRootAscending`, and
+`VoicingAndPresetsTests.cpp` for the regression test encoding this exact
+case so it can't silently come back.
 
-## Built but not wired up (Phase 2 groundwork)
+## Built and working — Phase 1
 
-`source/Progression/ChordEvent.h` and `ProgressionModel.h` are a real,
-independently unit-tested data model — add/remove/move/resize/serialize
-all work and round-trip through `juce::ValueTree` correctly. `apvts`
-state save/restore already includes an empty `<PROGRESSION>` tree so this
-is forward-compatible.
+- **Key**: all 12 chromatic roots. **Scale**: all 12 scales/modes from
+  the spec (Major, Natural/Harmonic/Melodic Minor, the 5 other church
+  modes, Major/Minor Pentatonic, Blues).
+- **Algorithmic diatonic chord generation**: chords are derived from
+  Key+Scale by actually stacking scale tones, not a lookup table.
+  Verified against the spec's C Major/G Major/A Minor test vectors,
+  including natural minor's v being genuinely minor, not forced major.
+- **Enharmonic spelling**: flat-preferring keys (F, Bb, Eb, Ab, Db) spell
+  with flats; everything else with sharps; modes follow their parent
+  major's bias. (This pass adds a user override on top — see below.)
+- **A–J keyboard → real MIDI**: real-time safe, edge-triggered from an
+  atomic mask, per-note reference counting so two chords sharing a MIDI
+  note can't cause a premature or duplicate Note Off.
+- **Internal preview synth**: one clean voice (not the full 8-instrument
+  picker from spec section 26), audible with nothing downstream.
+- **Mouse click on a chord card** plays/stops the chord through the same
+  path as the keyboard.
+- **Visual feedback**: chord cards highlight/fade on press/release, a
+  MIDI-out activity lamp. Colour follows chord quality.
+- **Resizable editor** with proportional (not fixed-canvas) layout.
+- **State persistence** via the standard APVTS XML pattern.
+- **Stuck-note handling**: reference-counted note-offs, plus the editor
+  releases every held slot on focus loss or close. The one gap: a host
+  hard-killing the process mid-chord has no `MidiBuffer` available in
+  `releaseResources()` for a final Note Off — a limitation shared by
+  essentially every JUCE MIDI-generating plugin.
 
-**Nothing else references this model.** There is no timeline UI, no
-drag-and-drop, no PLAY/ADD mode toggle, no loop playback. Phase 1's UI is
-play-only, matching the spec's own Phase 1 scope exactly — an ADD-mode
-toggle with no timeline behind it would be exactly the kind of dead
-control the spec explicitly prohibits, so it isn't there.
+## Built and working — voice-leading pass
 
-## CI (GitHub Actions)
+- **Auto Inversion**, on by default: a newly-pressed chord is re-voiced
+  into whichever inversion's centroid lands closest to the last chord
+  actually played, bounded so it never shifts a whole chord by an extra
+  octave (can't wander into an extreme register over a long sequence).
+  Not the full Auto Voicing engine from spec section 13 (no Open/Wide/
+  Piano/Simple modes, no register controls).
+- **Per-slot quality/extension override**: right-click (ctrl-click on
+  macOS) a chord card to open a popup. Pick a quality (Major/Minor/
+  Diminished/Augmented/Sus2/Sus4) and/or an extension (6/7/Maj7/Add9);
+  the root never changes. An overridden card shows a small dot. Backed
+  by 14 real APVTS parameters (`SLOT0_QUALITY` … `SLOT6_EXTENSION`), so
+  overrides get host automation and state save/restore for free.
+- **Consistent loudness across chord sizes**: velocity scaled by roughly
+  `sqrt(3 / toneCount)` so a 4-note chord doesn't ring louder than a
+  3-note one. Applies to the real MIDI sent out, not just the preview.
 
-`.github/workflows/build_and_test.yml` is adapted directly from
-Home-Disto's actual, working file (byte-verified from the uploaded zip,
-not guessed): same macOS + Windows matrix, sccache, `ctest`, and
-`pluginval --strictness-level 10`. Three deliberate differences from the
-Home-Disto/Home-Sidechain version:
+**Architecture carried forward from that pass**: the override system's
+14 parameter IDs are built by two static helpers
+(`PluginProcessor::qualityParamId`/`extensionParamId`) used both when
+declaring the parameters and when caching raw pointers to them at
+construction — one source of truth, so the two can't drift apart, and
+`processBlock` never has to build a parameter-ID string (which would
+allocate) just to read one of these every block. The edit popup is a
+`juce::CallOutBox` holding `homeUI::ChordEditPanel`
+(`Shared/ChordEditPanel.h`).
 
-1. **No AU/AUv3/CLAP artifact paths** — this plugin's `FORMATS` in
-   `CMakeLists.txt` is `Standalone VST3` only, matching the spec's
-   explicit ask, so the workflow doesn't reference formats that were
-   never asked for and aren't being built.
-2. **No macOS icon-embedding or Windows installer (Inno Setup) steps** —
-   both depend on a `packaging/` folder (an `.icns` and an `.iss` script)
-   that doesn't exist for this plugin yet. Rather than copy steps that
-   would fail on a missing file, both platforms just zip the raw build
-   output. Add `packaging/pamplejuce.icns` + `packaging/installer.iss`
-   and bring the equivalent steps back from Home-Disto's file when you
-   want a real installer.
-3. **`nightly.yml` and `linux-ci-image.yml` were not copied.** Both are
-   Pamplejuce-template-maintainer-only files, not project CI: `nightly.yml`
-   guards itself with `if: github.repository == 'sudara/pamplejuce'` (so
-   it never actually runs on a Home-* repo either) and its own comment
-   says "feel free to delete this file"; `linux-ci-image.yml` builds and
-   pushes a Docker image to `ghcr.io/sudara/...`, a registry namespace
-   Dubtach doesn't own. They're harmless leftovers in the other two repos,
-   not something worth carrying forward.
+**A naming caveat carried forward**: `Extension::Sixth` (+9 semitones) is
+used both for a plain 6th chord and, combined with Diminished quality,
+for what's really a fully-diminished 7th — but it always displays as
+"6" (e.g. "Cdim6"), never "dim7". Every quality+extension combination
+follows a simple, consistent `root + quality suffix + extension suffix`
+rule rather than full jazz-notation correctness (e.g. Diminished+
+MajorSeventh has no single standard symbol and just gets the mechanical
+concatenation). The actual notes are always correct; only the label can
+look non-idiomatic on a few unusual combinations. See
+`extensionSuffix`/`extensionLabel` in `MusicTheory/Scale.h`.
 
-Same caveat as everything else here: this has not actually been run on
-GitHub — there's no way to trigger a workflow from this environment
-either. Push it and see what the Actions tab says.
+## Built and working — this pass
 
-## Not started at all
+- **Progression timeline** (spec sections 8–11): drag a block to move
+  it, drag its right edge to resize it, click to select, Delete/
+  Duplicate buttons, snapped to a quarter-beat grid. Loop region with
+  draggable start/end markers. Play/Stop/Restart transport, driven by
+  **this plugin's own internal clock** (a Tempo knob, 20–300 BPM) — see
+  "Known scope limits" for why this isn't synced to host transport.
+  `Timeline/TimelineComponent` (UI) + `Timeline/SequencePlayer` (the
+  audio-thread engine that actually triggers notes).
+- **ADD mode**: a checkbox; pressing a keyboard or MIDI key (not a mouse
+  click — see `ChordKeyboardEngine`'s class comment) appends that slot's
+  current chord to the end of the timeline, one bar long, through the
+  undo manager.
+- **Rhythm engine** (spec section 21), all 8 patterns: Sustained, Whole,
+  Half, Quarter, Eighth, Sixteenth, Strum, Arpeggio. A per-event
+  property, edited via a toolbar that appears under the timeline when a
+  block is selected.
+- **Arpeggiator** (spec section 22): Up, Down, Up/Down, Random, with a
+  selectable rate (1/4 to 1/32) — one of the rhythm patterns above,
+  sharing its scheduling.
+- **Bass system** (spec section 23): Root, Third, Fifth (both map onto
+  existing chord inversions), Inversion (root position — the sequencer
+  doesn't auto-invert between events, see below), Custom (an explicit
+  slash-bass pitch class placed below the chord).
+- **Presets** (spec section 19), the 5 named there (I-V-vi-IV, vi-IV-I-V,
+  I-IV-V-I, I-iii-vi-IV, vi-V-IV-V), scale-aware — verified in C Major
+  and D Major that the actual chords differ correctly, not transposed
+  note names. Applying a preset clears and rebuilds the timeline as one
+  grouped undo step.
+- **Undo/redo** (spec section 32) for every timeline edit — add, remove,
+  move, resize, rhythm/bass/arp changes, preset application — via
+  `juce::UndoManager` and three `juce::UndoableAction` subclasses
+  (`Progression/ProgressionActions.h`) wrapping the existing, already-
+  tested `ProgressionModel` rather than rewriting its internals. A
+  dedicated UndoManager, deliberately not shared with APVTS parameter
+  changes — see "Key architectural decisions."
+- **Numeric key input**: the number row (1–7, not the numpad) triggers
+  the same 7 slots as A–J. A new setting (Letters / Numbers / Both,
+  default Both) controls which are active.
+- **Note spelling preference**: Auto (the existing per-key convention) /
+  Sharps / Flats, plugin-wide. Applies to the chord row and the override
+  popup's title; see "Known scope limits" for where it doesn't yet reach.
+- **External MIDI keyboard input**: white keys, by pitch class
+  (C,D,E,F,G,A,B → slots 1–7 by ordinal position, not absolute pitch),
+  trigger the same slots as the computer keyboard — so "C major's white
+  keys" always means "degrees 1–7 of whatever Key/Scale is selected,"
+  matching how chord-pad controllers conventionally work. Black keys are
+  ignored. Reuses the Velocity knob rather than real MIDI velocity — a
+  deliberate simplification, see below.
+- **Settings popup**: the header's small button opens a popup for the
+  two preferences above (keyboard mode, note spelling).
 
-Everything else in the original spec: the progression timeline itself
-(section 8) and all its editing (sections 9–11), tempo/time signature
-(12), the full Auto Voicing engine with Open/Wide/Piano/Simple modes and
-register controls (13), manual (non-Auto) inversion selection, borrowed/
-color chords (17), suggestions (18), presets (19), transpose-with-
-relative-key (20), the rhythm engine (21), arpeggiator (22), bass/
-slash-chord system (23), humanization (24), MIDI export to a file and
-MIDI drag-out (28–29), sections (30), the rest of the chord edit menu
-beyond quality/extension — Length/Voicing/Octave/Velocity/Bass/Rhythm/
-Arpeggio per chord (31), undo/redo (32), the full 8-instrument preview
-picker (26), MIDI-input chord detection (34), and Scale Lock (35).
+## Known scope limits in this pass (deliberate, not oversights)
 
-**A naming caveat worth knowing about**: `Extension::Sixth` (+9
-semitones) is used both for an added 6th on a major/minor triad *and*,
-combined with a Diminished quality, for what's really a fully-diminished
-7th chord — but the display always shows it as "6" (e.g. "Cdim6"), never
-"dim7", even though "dim7" is the standard name for that specific
-combination. Every other quality+extension combination follows a simple,
-consistent `root + quality suffix + extension suffix` rule rather than
-full jazz-notation correctness (e.g. Diminished+MajorSeventh has no
-single standard symbol at all, so it just gets the same mechanical
-concatenation). The actual *notes* are always correct regardless of
-quality — only the display label can look non-idiomatic on a few unusual
-combinations. See `extensionSuffix`/`extensionLabel` in `Scale.h`.
+- **The sequencer's transport is self-contained, not host-synced.** It
+  never reads `AudioPlayHead` — Play/Stop/tempo are entirely this
+  plugin's own, independent of the host transport. Genuine host-sync is
+  real additional work for a future pass.
+- **The sequencer doesn't auto-invert between timeline events.** Auto
+  Inversion's voice-leading is a *live-play* feature. Each timeline event
+  plays its own root position (or Third/Fifth bass inversion)
+  independently; there's no smoothing of movement *between* consecutive
+  timeline chords the way there is between live-played ones.
+  `SequencePlayer::startEvent` does feed its played notes into the live
+  engine's voice-leading memory, so playing live right after the
+  sequencer stops leads smoothly from it — but sequenced-to-sequenced
+  voice-leading isn't implemented.
+- **Rhythm/arpeggio pulses are block-quantized, not sample-accurate** —
+  a deliberate trade-off. An event's *start and end* are placed at the
+  exact interpolated sample within whichever block they fall in (so
+  nothing drifts or gets stuck), but a repeating pulse *within* an event
+  (a Quarter-note retrigger, an arp step) is only checked once per block
+  and fires at that block's first sample if due. A few milliseconds of
+  jitter at most, inaudible at typical block sizes — but a real,
+  conscious simplification, made because precise event start/end (where
+  a mistake means an actual stuck note) mattered far more than
+  microsecond-precise internal subdivision in the single riskiest piece
+  of this pass.
+- **Loop wrap can drop up to one block's worth of time** (a few ms) right
+  at the loop boundary rather than precisely splitting a block across the
+  seam. Inaudible at normal block sizes; a named simplification.
+- **Timeline blocks always display with sharp spelling**, regardless of
+  the Note Spelling preference — `TimelineComponent` isn't threaded
+  through to that parameter yet. The chord row and override popup do
+  respect it correctly.
+- **An existing timeline block's quality/extension isn't editable after
+  placement** — it inherits whatever the live slot's quality/extension
+  was at the moment it was added (or whatever a preset specifies). Only
+  Rhythm/Bass/Arp are editable post-placement, via the selected-event
+  toolbar. A reasonable next addition, scoped out here for time.
+- **External MIDI keyboard velocity is ignored** in favour of the
+  Velocity knob, for consistency with computer-keyboard input (which has
+  no real velocity) and to avoid threading a second, per-source velocity
+  through `ChordKeyboardEngine`.
+- **No MIDI drag-out or file export** (spec sections 28–29), no sections
+  (30), no borrowed/color chords (17), no suggestions (18), no
+  humanization (24), no full Auto Voicing with Open/Wide/Piano/Simple
+  modes (13) — Auto Inversion remains the only voicing mode.
+- **Configurable snap grid** (spec section 10) isn't implemented — the
+  timeline snaps to a fixed quarter-beat grid.
 
-## Key architectural decisions
+## Key architectural decisions (this pass)
 
-- **Real-time safety split**: `MusicTheoryTypes.h`/`Scale.h`/`Chord.h`
-  separate a zero-allocation, no-`juce::String` "shape" representation
-  (safe on the audio thread) from a `juce::String`-bearing
-  `ChordDefinition` (message-thread only). `processBlock` recomputes the
-  current shapes fresh every block from the Key/Scale parameters rather
-  than caching them across threads — cheap (a handful of fixed-array
-  writes), and it sidesteps needing any cross-thread chord cache at all.
-- **Chord placement**: each slot's root is placed in whichever octave
-  lands closest to a common reference pitch, so the 7 chords cluster in
-  one register instead of spreading across two octaves. This is a
-  simple, honest stand-in for real voice-leading, not a voicing engine —
-  see `ChordKeyboardEngine.cpp`'s `placeNearReference`.
-  Auto Voicing that minimises movement *between neighbouring chords in a
-  progression* is real Phase 3 work.
-  - **Chord-tone stacking is generic over scale size**: the same
-    "skip-a-scale-tone" algorithm produces textbook triads for the 7-note
-    scales and produces sensible pentatonic/blues chords for the 5/6-note
-    ones (falling back to `ChordQuality::Other` on the few pentatonic
-    degrees that don't land on a plain major/minor/diminished/augmented/
-    sus shape, rather than forcing a wrong label).
-- **UI kit**: `source/Shared/HomeSeriesUI.h` reuses the exact `homeUI`
-  colour tokens and card/well/brand painters from Home-Disto /
-  Home-Sidechain, plus one new component, `ChordCard`. Everything from
-  the existing kit that Phase 1 doesn't actually use (Pill, Checkbox,
-  SegmentedSwitch, LinkSelector, PowerButton, SettingsButton,
-  ResetButton) was left out rather than copied in unused, so there's
-  nothing dead sitting in the file — add them back from the sibling repos
-  when Phase 2 needs them.
-- **Tests**: `tests/CMakeLists.txt` fetches Catch2 via CPM directly rather
-  than through the private `sudara/cmake-includes` submodule's
-  `pamplejuce_add_tests()` — that submodule's contents weren't available
-  when this project was generated (a plain zip export of a repo doesn't
-  include submodule contents). Functionally equivalent; swap it for the
-  real helper when you want to match the other Home-* repos exactly.
-- **Override storage**: per-slot overrides are real `AudioParameterChoice`
-  parameters (14 of them, `SLOT<n>_QUALITY`/`SLOT<n>_EXTENSION`), not raw
-  atomics, specifically so they get host automation and APVTS state
-  save/restore for free rather than needing bespoke serialization. Their
-  string IDs are built by two small static helpers on the processor
-  (`qualityParamId`/`extensionParamId`) used both when declaring the
-  parameters and when caching raw pointers to them at construction time —
-  one source of truth, so the two can never name different parameters by
-  accident. The raw pointers are cached once (construction, message
-  thread) specifically so `processBlock` never has to concatenate a
-  parameter-ID string — and therefore allocate — just to read one of
-  these every block.
-- **Auto Inversion's voice-leading model is a centroid comparison, not
-  full note-to-note matching**: comparing the average pitch of each
-  candidate inversion against the average pitch of the last chord played
-  is a simplification of real voice-leading (which would try to minimise
-  *each individual voice's* movement, not just the chord's overall
-  register), chosen because it's cheap, real-time safe, and handles
-  chords of different sizes (triad to 7th to triad) without needing a
-  notion of which old note "belongs to" which new one.
-- **The edit popup is a `juce::CallOutBox`**, JUCE's standard mechanism
-  for a small contextual popup anchored to the component that opened it,
-  holding a new `homeUI::ChordEditPanel` (`source/Shared/ChordEditPanel.h`).
-  Its quality/extension buttons are a small new radio-style `OptionButton`
-  local to that file, not a port of the sibling repos' `Pill`/
-  `SegmentedSwitch` components (which weren't carried over into this
-  project's `HomeSeriesUI.h` — see the UI kit note above).
+- **`NoteLedger`** (`Midi/NoteLedger.h`): a single per-MIDI-note reference
+  count, shared by `ChordKeyboardEngine` (live play) and `SequencePlayer`
+  (the sequencer). This is what lets live and sequenced notes overlap on
+  the same pitch without one cutting the other off early or double-
+  releasing — the same reference-counting discipline Phase 1 established
+  for overlapping live chords, now extended to a second, independent
+  note source.
+- **Undo is deliberately its own `UndoManager`**, separate from APVTS's.
+  Sharing one would have made every parameter change — including every
+  tick of a knob drag — a separate undo step, flooding the stack with
+  noise unrelated to timeline editing. Key/Scale/Octave/Velocity/etc.
+  have no undo in this plugin (the host's own automation covers them,
+  same as Phase 1); only timeline edits go through `undoManager`.
+- **Drag gestures produce exactly one undo step**, not one per
+  `mouseDrag` callback: `TimelineComponent` applies move/resize live
+  (bypassing undo, for responsive visual feedback), then on `mouseUp`
+  reverts to the pre-drag state and re-applies the final result through
+  a single `UpdateChordAction`. See the comment in
+  `TimelineComponent::mouseUp` — getting this backwards (reading the
+  "before" state *after* the live preview already changed it) would
+  silently make undo a no-op, so the order matters.
+- **White-key MIDI mapping uses ordinal position, not absolute pitch**:
+  `whiteKeySlotForPitchClass` maps C/D/E/F/G/A/B to slots 1–7 by which
+  white key it is, not by transposing — so playing "C major shape" on an
+  external keyboard always triggers scale degrees I–VII of whatever Key/
+  Scale is currently selected, matching the request and how chord-pad
+  controllers conventionally work.
+- **Three new `std::atomic` control fields on `SequencePlayer`** (playing,
+  tempo, loop range, position) exist because this is a real thread-safety
+  requirement: set from the message thread (UI), read every block from
+  the audio thread inside `advanceAndRender`. Caught and fixed during
+  development, before reaching you as a bug.
+- **`ChordEvent` grew rhythm/arp/bass fields directly** rather than a
+  separate properties object, since every property is 1:1 with a
+  specific timeline event and the existing serialization already handles
+  adding fields cleanly.
+- **API verification this pass**: `juce::UndoManager`/`UndoableAction`
+  (`perform`/`undo`/`redo`/`canUndo`/`canRedo`/`beginNewTransaction`),
+  `juce::ComboBox`'s `getSelectedItemIndex`/`setSelectedItemIndex` (and
+  its default-notification behaviour, which mattered for avoiding a
+  spurious update loop when syncing the selected-event toolbar),
+  `juce::Button::setButtonText`/`getButtonText` as base-class methods,
+  and `juce::CallOutBox::launchAsynchronously`'s exact signature were all
+  checked against current docs.juce.com/master before use. This continues
+  the practice the voice-leading pass adopted after the
+  `Font::getStringWidth` mistake in Phase 1 (see the CI run log below).
 
 ## Testing performed
 
-**Read this before trusting anything else about correctness.** This code
-was written in a sandboxed environment with no network access and no
-JUCE/compiler toolchain available, so:
+**Read this before trusting anything new in this pass.** Same sandbox
+limits as every prior pass — no compiler, nothing here has been built —
+but this pass additionally has a real *risk gradient* worth being
+explicit about, because not all of the new code is equally trustworthy:
 
-- **The C++ has not been compiled** for anything added in this pass
-  (Auto Inversion, the override system, `ChordEditPanel`, `Checkbox`) —
-  Runs 1-3 below only cover Phase 1. There may be typos, API mismatches,
-  or include-order issues that only a real build will surface, same as
-  every previous pass.
-- **New unit tests were added** for this pass's music-theory logic:
-  `tests/ChordOverrideTests.cpp` covers `buildOverriddenShape` (named
-  chord types like dominant 7th, m7, minor-major 7th, on a fixed root),
-  `invertShape` (root position through every inversion of both a triad
-  and a 4-note 7th chord, including the wrap-around case), and both
-  `applyOverride` overloads (quality-only, extension-only, both at once,
-  and the inactive/passthrough case) — including that overriding a
-  diatonic chord's quality correctly flips its roman-numeral case. Same
-  caveat as always: written and hand-verified, not run.
-- **What actually was verified**: the override/inversion math (dominant
-  7th, m7, minor-major 7th spellings; 1st/2nd inversion of a triad; 3rd
-  inversion of a 7th chord putting the 7th in the bass) was independently
-  reimplemented in Python and cross-checked before being committed to C++
-  — same discipline as the original chord-stacking verification. All
-  values matched. The Python check does not catch C++-specific mistakes.
-- **API verification this pass**: two JUCE APIs new to this pass
-  (`juce::Button::setButtonText`/`getButtonText` as base-class methods,
-  and `juce::CallOutBox::launchAsynchronously`'s exact signature) were
-  checked against current docs.juce.com/master before use, rather than
-  assumed — directly because of what Runs 2-3 below turned up about
-  trusting memory over verification for this specific JUCE branch.
-- **Real-time safety** was reasoned through carefully (see the comments
-  in `ChordKeyboardEngine.h`/`.cpp`) but never measured — no profiler, no
-  actual audio thread. The new velocity-compensation math
-  (`compensateVelocityForToneCount`) is a handful of float operations, no
-  allocation, same real-time-safety class as everything around it.
+**Lower risk — independently verified, same discipline as the Phase 1
+music-theory engine:**
+- The octave-bug fix (`placeRootAscending`) — reproduced the bug and
+  verified the fix in Python (see above).
+- `Voicing.h`'s functions (`anchorMidiNote`, `placeRootAscending`,
+  `voiceShape`, `compensateVelocityForToneCount`, `chooseInversionNearest`)
+  — real unit tests (`VoicingAndPresetsTests.cpp`), including specific
+  dominant-7th/m7/minor-major-7th voicings and triad/7th-chord
+  inversions, cross-checked in Python first.
+- Presets — unit tested; scale-awareness confirmed in two different keys.
+- `ProgressionModel`/`ChordEvent` extensions and the three undo actions
+  — real unit tests (`ProgressionActionsTests.cpp`), including that
+  `UpdateChordAction` restores the *exact* pre-change state (quality,
+  position, and length together) on undo.
+- Every include was traced by hand against each file's own include chain
+  (not "compiles somewhere in the project"), the same process that caught
+  two real bugs in the voice-leading pass. This pass added explicit
+  `<cmath>` to `PluginEditor.cpp` and `<functional>` to
+  `ChordEditPanel.h` after finding they relied on one-level transitive
+  includes rather than stating their own dependencies directly.
+
+**Higher risk — reasoned through carefully, but genuinely not testable
+without a compiler and a running transport:**
+- **`SequencePlayer`** — no automated tests at all. Its correctness
+  depends on floating-point beat/sample arithmetic, several interacting
+  state machines (per-event runtime, loop wrapping, rhythm pulsing, arp
+  stepping), and timing behaviour that's awkward to unit-test
+  meaningfully without simulating a sequence of real `processBlock`
+  calls. This is the single piece of this pass to listen to most
+  carefully: specifically test a Strum event, an Arpeggio event, and a
+  loop that wraps mid-event, and listen for anything that doesn't stop
+  cleanly.
+- **The whole `PluginEditor` wiring for this pass** (transport buttons,
+  selected-event toolbar, settings popup, preset application) — correct
+  by my own code-tracing, never run.
+- **`TimelineComponent`'s mouse-drag-to-undo logic** — reasoned through
+  carefully (see "Key architectural decisions") but not tested against an
+  actual mouse.
+
+Given that risk gradient, if the next build throws errors, I'd bet on
+`SequencePlayer.cpp` or the `PluginEditor`/`TimelineComponent` wiring
+before the music-theory or undo-action layers.
 
 ### Real CI run log
 
-Unlike everything above, this section tracks what an actual build
-attempt has shown, not just reasoning-through. Updated as real CI output
-comes back.
-
 - **Run 1 (Windows, clang-cl)**: got past MSVC toolchain setup, JUCE
-  configure, `juceaide` build, and CPM fetching Catch2@3.7.1 — all of
-  that is confirmed working. Failed at `tests/CMakeLists.txt:63-64`:
-  `include(Catch)` couldn't find `Catch.cmake`, so `catch_discover_tests`
-  was an unknown command. **Root cause**: CPM fetches Catch2 from source
-  rather than via `find_package`, and only `find_package` wires up
-  `CMAKE_MODULE_PATH` automatically — a well-documented Catch2/CPM
-  interaction, confirmed against Catch2's own docs and a CPM.cmake GitHub
-  issue hitting this exact error with this exact setup. **Fixed**: added
-  `list(APPEND CMAKE_MODULE_PATH "${Catch2_SOURCE_DIR}/extras")` right
-  after the `CPMAddPackage` call.
+  configure, `juceaide` build, and CPM fetching Catch2@3.7.1. Failed at
+  `tests/CMakeLists.txt:63-64`: `include(Catch)` couldn't find
+  `Catch.cmake`, so `catch_discover_tests` was an unknown command.
+  **Root cause**: CPM fetches Catch2 from source rather than via
+  `find_package`, and only `find_package` wires up `CMAKE_MODULE_PATH`
+  automatically — confirmed against Catch2's own docs and a CPM.cmake
+  GitHub issue hitting this exact error with this exact setup. **Fixed**:
+  added `list(APPEND CMAKE_MODULE_PATH "${Catch2_SOURCE_DIR}/extras")`
+  right after the `CPMAddPackage` call.
 - **Run 2 (Windows, clang-cl)**: configure succeeded; compilation reached
-  `PluginProcessor.cpp` and `PluginEditor.cpp` and failed on both with the
+  `PluginProcessor.cpp`/`PluginEditor.cpp` and failed on both with the
   same 4 errors, all in `Shared/HomeSeriesUI.h`: `no member named
   'getStringWidth' in 'juce::Font'`. **Root cause**: this project builds
   against JUCE's `develop` branch, where `Font::getStringWidth()` has
-  been removed outright (not just deprecated) as part of a font/text
-  metrics overhaul — confirmed against JUCE's own `BREAKING_CHANGES.md`
-  and the current docs.juce.com reference. Worth noting: this exact line
-  used to call `GlyphArrangement::getStringWidthInt()`, which an earlier
-  pass in this project changed to `Font::getStringWidth()` in the name of
-  using a "more certain" API — that change was wrong. **Fixed**: switched
-  all 4 call sites to `juce::TextLayout::getStringWidth (font, text)`,
-  the replacement JUCE's own breaking-changes doc names explicitly, which
-  also returns `float` directly (removing a few now-redundant casts).
-  The rest of `HomeSeriesUI.h`'s Font usage (`FontOptions`, `withName`,
-  `withStyle`) produced no errors in this same run, so it's left as-is.
+  been removed outright (not deprecated) — confirmed against JUCE's own
+  `BREAKING_CHANGES.md` and the current docs.juce.com reference. Worth
+  noting: this exact line used to call `GlyphArrangement::getStringWidthInt()`,
+  which an earlier pass changed to `Font::getStringWidth()` in the name
+  of using a "more certain" API — that change was wrong; the compiler is
+  the actual ground truth, not a guess about API stability. **Fixed**:
+  switched all 4 call sites to `juce::TextLayout::getStringWidth (font,
+  text)`, the replacement JUCE's own breaking-changes doc names
+  explicitly, which also returns `float` directly.
 - **Run 3 (Windows, clang-cl)**: confirmed the Run 2 fix held —
-  `PluginProcessor.cpp` and `PluginEditor.cpp` no longer show the
-  `getStringWidth` errors. New, unrelated failure in `Chord.cpp:80`: `use
-  of undeclared identifier 'noteName'`. **Root cause**: a genuine missing
-  include, not a JUCE API issue this time — `chordToneNames()`'s
-  implementation in `Chord.cpp` calls `noteName()`, which is declared in
-  `Scale.h`, but `Chord.cpp` only included `Chord.h` (which does not
-  itself include `Scale.h`). `MusicTheoryEngine.cpp` includes both
-  headers, which is why the same function worked fine when called from
-  there. **Fixed**: added `#include "Scale.h"` to `Chord.cpp` directly.
-  This run also gave enough visibility to confirm `ChordEvent.cpp` and
-  `ProgressionModel.cpp` compile cleanly (steps 12 and 14, no failures
-  reported), in addition to the files Run 2 already confirmed.
-  **Additional hardening from a full re-audit** (requested explicitly:
-  "fix all other bugs"): traced every non-trivial symbol in every `.cpp`
-  file against that file's own include chain (not what a sibling file
-  happens to include), the same class of check that would have caught
-  both bugs above. Found two places relying on `std::move` being
+  `PluginProcessor.cpp`/`PluginEditor.cpp` no longer showed the
+  `getStringWidth` errors. New failure: `Chord.cpp:80`, `use of
+  undeclared identifier 'noteName'`. **Root cause**: a genuine missing
+  include — `chordToneNames()`'s implementation in `Chord.cpp` calls
+  `noteName()`, declared in `Scale.h`, but `Chord.cpp` only included
+  `Chord.h` (which doesn't itself include `Scale.h`). It worked when
+  called from `MusicTheoryEngine.cpp` only because that file happens to
+  include both headers. **Fixed**: added `#include "Scale.h"` to
+  `Chord.cpp` directly. This run also confirmed `ChordEvent.cpp` and
+  `ProgressionModel.cpp` compile cleanly. **Additional hardening** done
+  at the same time (requested explicitly: "fix all other bugs"): traced
+  every non-trivial symbol in every `.cpp` file against that file's own
+  include chain, the same class of check that would have caught both
+  bugs above; found and closed two places relying on `std::move` being
   transitively available via `<vector>`/`<algorithm>` rather than
-  including `<utility>` directly (`MusicTheoryEngine.cpp`,
-  `ProgressionModel.cpp`) — both had already compiled successfully in
-  Run 2/3, so this isn't a fix for an active failure, just closing a
-  portability gap before it becomes one. Also read JUCE's full
-  `BREAKING_CHANGES.md` (version 6.1.0 through 8.0.13) end to end and
-  checked every other non-trivial JUCE API used in this codebase
-  (`Slider`/rotary params, `ADSR`, `dsp::IIR`, `AudioProcessorValueTreeState`
-  attachments/listeners, `ValueTree`, the `AudioParameter*Attributes`
-  constructors, `setResizable`/`setResizeLimits` ordering) against it —
-  nothing else on that list matches this codebase, and two choices
-  already made (the `Attributes`-based parameter constructors, calling
-  `setResizable(true, true)` before `setResizeLimits`) turn out to
+  `<utility>` directly (`MusicTheoryEngine.cpp`, `ProgressionModel.cpp`)
+  — both had already compiled fine, so this was hardening, not an active
+  fix. Also read JUCE's full `BREAKING_CHANGES.md` (6.1.0 through 8.0.13)
+  end to end and checked every other non-trivial JUCE API used in the
+  codebase against it — nothing else matched, and two choices already
+  made (the `Attributes`-based parameter constructors, calling
+  `setResizable(true, true)` before `setResizeLimits`) turned out to
   already match what current JUCE requires.
-  Not yet confirmed by a further run. The Tests target (Catch2Main.cpp,
-  MusicTheoryTests.cpp, ProgressionModelTests.cpp) has not been reached
-  by any real build yet — all three runs so far have failed or stopped
-  within the main plugin target.
-- **Run 4 and beyond**: not yet attempted. Everything from "this pass's
-  additions" above (Auto Inversion, the 14 override parameters,
-  `ChordEditPanel`, `Checkbox`, `ChordOverrideTests.cpp`) is new since Run
-  3 and has not been through a real build at all. Expect this to be where
-  the next round of real compiler feedback lands.
+- **Run 4 and beyond**: not yet attempted. Everything described in "this
+  pass" above — the octave-bug fix, the timeline, rhythm engine,
+  arpeggiator, bass system, presets, undo/redo, numeric/MIDI input, note
+  spelling — is new since Run 3 and has not been compiled at all.
 
-**First thing to do with this**: `cmake -B Builds && cmake --build
-Builds` and fix whatever the compiler finds. Given the scope of what's
-here, expect *some* build errors on the first attempt — that's normal for
-a from-scratch pass this size, not a sign the design is wrong.
+**First thing to do with this**: build it, and expect real errors — this
+pass is roughly the size of the previous two combined, built without a
+compiler throughout. That's not a reason to distrust the design; it's the
+reason this document names its risk areas specifically instead of
+claiming uniform confidence.
 
 ## Build instructions
 
@@ -371,21 +399,20 @@ ctest --test-dir Builds --verbose --output-on-failure
 ```
 
 The Standalone build is the fastest way to sanity-check sound and
-keyboard input without a DAW in the loop. For the VST3, copy/point your
-DAW at `Builds/HomeChords_artefacts/`.
+keyboard/timeline behaviour without a DAW in the loop.
 
 ## Suggested next steps
 
-1. Build it locally, fix compiler errors — this pass's new code
-   (Auto Inversion, overrides, `ChordEditPanel`) hasn't been built at all
-   yet, so treat it with at least as much suspicion as Phase 1 got.
-2. Run the tests, fix whatever they turn up.
-3. Confirm by ear/eye: select C Major, press A–J, hear/see the right
-   chords; right-click a card, change its quality/extension, confirm the
-   root note doesn't move and the card gets its override dot; toggle Auto
-   Inversion off and on and listen for the difference; hold a triad then
-   an overridden 7th chord back to back and check they're not obviously
-   different in loudness.
+1. Build it, fix compiler errors — expect more than usual this time, see
+   above.
+2. Run the tests.
+3. Listen specifically for: the octave bug being gone (a smooth ascending
+   row in several different keys); a Strum and an Arpeggio event playing
+   and stopping cleanly; a loop that wraps mid-event leaving nothing
+   stuck; Undo/Redo actually restoring state after a drag, a delete, and
+   a preset application; numeric keys and MIDI keyboard white keys both
+   triggering the right chords.
 4. Push to GitHub and check the Actions tab.
-5. From there, Phase 2 (the progression timeline) is the natural next
-   piece of work — `ProgressionModel` is ready for it.
+5. After that: host-transport sync, sample-accurate internal pulses,
+   editable quality/extension on placed timeline blocks, and the rest of
+   the "not started" list are the natural next pieces.

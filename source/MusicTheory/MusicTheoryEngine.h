@@ -24,8 +24,10 @@ namespace musictheory
 
     // Message-thread only. One ChordDefinition per active scale degree (5
     // for pentatonic scales, 6 for blues, 7 otherwise), in slot order
-    // (slot 0 = A, ... slot 6 = J).
-    std::vector<ChordDefinition> buildDiatonicChords (int tonicPitchClass, ScaleType scale);
+    // (slot 0 = A, ... slot 6 = J). `spelling` overrides each key's usual
+    // sharp/flat bias when it's not Auto -- see NoteSpelling.
+    std::vector<ChordDefinition> buildDiatonicChords (int tonicPitchClass, ScaleType scale,
+                                                       NoteSpelling spelling = NoteSpelling::Auto);
 
     // Applies a per-slot override to an already-computed diatonic shape,
     // keeping the same root. Returns the shape unchanged if the override

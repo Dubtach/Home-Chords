@@ -56,6 +56,18 @@ namespace progression
         return true;
     }
 
+    bool ProgressionModel::replaceEvent (const juce::Uuid& id, ChordEvent newState)
+    {
+        const auto index = indexOfEvent (id);
+        if (index < 0)
+            return false;
+
+        newState.id = id;   // never let a caller accidentally reassign the id via this path
+        events[static_cast<size_t> (index)] = newState;
+        sortEvents();
+        return true;
+    }
+
     int ProgressionModel::indexOfEvent (const juce::Uuid& id) const
     {
         for (int i = 0; i < size(); ++i)

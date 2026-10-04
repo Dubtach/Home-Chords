@@ -2,19 +2,31 @@
 
 #include <JuceHeader.h>
 #include "MusicTheory/MusicTheoryEngine.h"
+#include "MusicTheory/Presets.h"
 #include "Midi/ChordKeyboardEngine.h"
+#include "Midi/NoteLedger.h"
 #include "Preview/PreviewSynth.h"
 #include "Progression/ProgressionModel.h"
+#include "Progression/ProgressionActions.h"
+#include "Timeline/SequencePlayer.h"
 
 // =============================================================================
 // Home-Chords -- MIDI chord generator / songwriting plugin.
 //
-// Phase 1 scope (see STATUS.md for the full breakdown): Key + Scale drive
-// algorithmic diatonic chord generation; the 7 keyboard slots (A S D F G H
-// J) trigger real, real-time-safe MIDI Note On/Off; a small internal
-// preview synth makes the plugin audible on its own. `progression` is
-// Phase 2 groundwork -- it's a real, tested data model, but nothing here
-// reads from or writes to it yet.
+// Key + Scale drive algorithmic diatonic chord generation; the 7 chord
+// slots trigger real, real-time-safe MIDI Note On/Off, playable from the
+// computer keyboard (letters and/or numbers, see KEYBOARD_MODE), the
+// mouse, or an external MIDI keyboard's white keys (mapped by ordinal
+// position -- the 1st, 2nd, ...7th white key in an octave, regardless of
+// its actual pitch, so they always mean "slot 1..7" of whatever Key/Scale
+// is selected). A small internal preview synth makes the plugin audible
+// on its own.
+//
+// PLAY mode sounds a slot live; ADD mode (keyboard/MIDI only, not mouse --
+// see ChordKeyboardEngine) appends that slot's current chord to the end of
+// `progression`, which SequencePlayer plays back on its own internal
+// transport (Play/Stop/Loop). Every progression edit goes through
+// `undoManager`.
 // =============================================================================
 
 class HomeChordsAudioProcessor : public juce::AudioProcessor
@@ -33,9 +45,10 @@ public:
 
     const juce::String getName() const override { return "Home-Chords"; }
 
-    // Incoming MIDI is currently ignored (reserved for the MIDI chord-
-    // detection feature in spec section 34); the plugin does generate MIDI
-    // from the keyboard, so producesMidi() is genuinely true.
+    // Incoming MIDI note on/off from a real MIDI keyboard's white keys
+    // triggers chord slots (see the class comment above and
+    // whiteKeySlotForPitchClass in the .cpp) -- so both accepting and
+    // producing MIDI are genuinely true.
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return true; }
     bool isMidiEffect() const override { return false; }
@@ -51,12 +64,36 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
 
     juce::AudioProcessorValueTreeState apvts;
+    juce::UndoManager undoManager;
+
+    // The timeline's data (real, tested) and its transport-synced player.
+    // Both public, matching apvts's own exposure style -- the editor reads
+    // and mutates them directly rather than through processor passthroughs
+    // for every single field.
+    progression::ProgressionModel progression;
+    timeline::SequencePlayer sequencePlayer;
 
     // ---- Called from the editor's message-thread key/mouse handling ----
 
-    // Thread-safe: just flips a bit the audio thread reads at the next
-    // block. Slot index is 0-6 (A through J).
+    // Computer keyboard: sounds the chord live, and (in ADD mode) counts
+    // as a trigger for the timeline. Slot index is 0-6 (first..last active
+    // slot for the current scale).
     void setChordSlotHeld (int slotIndex, bool held) noexcept { keyboardEngine.setSlotHeld (slotIndex, held); }
+
+    // Mouse: sounds the chord live, never triggers ADD mode.
+    void setChordSlotHeldFromMouse (int slotIndex, bool held) noexcept { keyboardEngine.setSlotHeldFromMouse (slotIndex, held); }
+
+    // Drains the set of slots triggered (by keyboard or MIDI) since the
+    // last call -- what ADD mode acts on. Call once per UI tick regardless
+    // of whether ADD mode is currently on, so switching into ADD mode
+    // later doesn't replay stale triggers.
+    juce::uint32 consumeTriggeredSlotsForAddMode() noexcept { return keyboardEngine.consumeTriggeredSlots(); }
+
+    // Appends slot's current effective chord (quality/extension override
+    // included) to the end of the progression, one bar long, through
+    // undoManager. Message thread only -- mutates progression/undoManager,
+    // neither of which is real-time safe.
+    void addChordFromSlotToTimeline (int slot);
 
     int getKeyTonicPitchClass() const noexcept;
     musictheory::ScaleType getScaleType() const noexcept;
@@ -64,8 +101,14 @@ public:
     // Message-thread only, allocates -- call when Key/Scale changes, not
     // once per frame. Returns the *effective* chord for each slot: the
     // plain diatonic chord, unless that slot has a quality/extension
-    // override, in which case the override is already applied.
+    // override, in which case the override is already applied. Spelling
+    // follows the NOTE_SPELLING parameter.
     std::vector<musictheory::ChordDefinition> getCurrentDiatonicChords() const;
+
+    // How many beats one bar is, from the TIME_SIG parameter (4/4->4,
+    // 3/4->3, 6/8->3, treating 6/8 as two dotted-quarter beats for bar-
+    // length and grid purposes). Message thread only.
+    double getBeatsPerBar() const noexcept;
 
     // ---- Per-slot quality/extension overrides ---------------------------
     //
@@ -80,14 +123,19 @@ public:
     void setSlotExtensionOverride (int slot, musictheory::Extension extension);
     void clearSlotOverride (int slot);
 
+    // ---- Sequencer transport (message thread) ---------------------------
+    // These go through request flags consumed at the top of the next
+    // processBlock, rather than touching sequencePlayer's note-emitting
+    // side directly, because stopping/seeking needs to emit Note Offs
+    // through a MidiBuffer that only exists inside processBlock.
+
+    void setSequencePlaying (bool shouldPlay);
+    void restartSequencer();   // seeks to the loop start and releases notes
+
     // UI polling (message-thread Timer): which slots are currently
     // sounding, and a decaying MIDI-out activity level.
     juce::uint32 getActiveSlotMask() const noexcept { return keyboardEngine.getActiveSlotMaskForUi(); }
     float getMidiActivity() const noexcept { return midiActivityForUi.load (std::memory_order_relaxed); }
-
-    // Phase 2 groundwork -- not yet read from or written to by
-    // processBlock or the editor. See the class comment above.
-    progression::ProgressionModel progression;
 
 private:
     juce::AudioProcessorValueTreeState::ParameterLayout createParameters();
@@ -104,10 +152,15 @@ private:
     musictheory::RtChordShape effectiveShape (int slot, const musictheory::RtChordShape& diatonicShape) const noexcept;
 
     midiengine::ChordKeyboardEngine keyboardEngine;
+    midiengine::NoteLedger noteLedger;   // shared between live play and the sequencer -- see NoteLedger.h
     preview::PreviewSynth previewSynth;
 
     double sampleRate = 44100.0;
     std::atomic<float> midiActivityForUi { 0.0f };
+
+    // See the "Sequencer transport" methods above.
+    std::atomic<bool> sequencerReleaseRequested { false };
+    std::atomic<double> sequencerSeekRequestBeats { -1.0 };
 
     // Raw pointers into apvts's own storage, cached once at construction so
     // processBlock never has to build a parameter-ID string (which would

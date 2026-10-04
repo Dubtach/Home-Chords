@@ -1,41 +1,9 @@
 #include "ChordKeyboardEngine.h"
-#include "../MusicTheory/Chord.h"   // musictheory::invertShape, used by chooseBestInversion
-#include <cmath>
+#include "../MusicTheory/Chord.h"
+#include "../MusicTheory/Voicing.h"
 
 namespace midiengine
 {
-    namespace
-    {
-        // Places a pitch class in whichever octave lands closest to a
-        // reference MIDI note, so all 7 slots' roots cluster together in
-        // one comfortable register instead of spreading across nearly two
-        // octaves (which a naive "always build upward from the pitch
-        // class" placement would do).
-        int placeNearReference (int pitchClass, int referenceMidiNote) noexcept
-        {
-            int note = pitchClass + 12 * (referenceMidiNote / 12);
-
-            while (note < referenceMidiNote - 6)
-                note += 12;
-            while (note > referenceMidiNote + 6)
-                note -= 12;
-
-            return note;
-        }
-
-        // Treats each simultaneous note as an independent, incoherent
-        // sound source (power sums, not amplitude), so scaling velocity by
-        // roughly sqrt(reference / actual) keeps a 4-note 7th chord from
-        // sounding noticeably louder than a plain 3-note triad just
-        // because it has one more note ringing.
-        int compensateVelocityForToneCount (int velocity, int toneCount) noexcept
-        {
-            constexpr float referenceToneCount = 3.0f;
-            const float scale = std::sqrt (referenceToneCount / static_cast<float> (juce::jmax (1, toneCount)));
-            return juce::jlimit (1, 127, static_cast<int> (std::lround (static_cast<float> (velocity) * scale)));
-        }
-    }
-
     void ChordKeyboardEngine::setSlotHeld (int slotIndex, bool held) noexcept
     {
         if (slotIndex < 0 || slotIndex >= numSlots)
@@ -44,15 +12,63 @@ namespace midiengine
         const auto bit = static_cast<juce::uint32> (1u << static_cast<unsigned> (slotIndex));
 
         if (held)
-            requestedMask.fetch_or (bit, std::memory_order_relaxed);
+        {
+            const auto previous = requestedMask.fetch_or (bit, std::memory_order_relaxed);
+            if ((previous & bit) == 0)
+                triggeredMask.fetch_or (bit, std::memory_order_relaxed);
+        }
         else
+        {
             requestedMask.fetch_and (~bit, std::memory_order_relaxed);
+        }
+    }
+
+    void ChordKeyboardEngine::setSlotHeldFromMouse (int slotIndex, bool held) noexcept
+    {
+        if (slotIndex < 0 || slotIndex >= numSlots)
+            return;
+
+        const auto bit = static_cast<juce::uint32> (1u << static_cast<unsigned> (slotIndex));
+
+        if (held)
+            mouseMask.fetch_or (bit, std::memory_order_relaxed);
+        else
+            mouseMask.fetch_and (~bit, std::memory_order_relaxed);
+    }
+
+    void ChordKeyboardEngine::setSlotHeldFromMidi (int slotIndex, bool held) noexcept
+    {
+        if (slotIndex < 0 || slotIndex >= numSlots)
+            return;
+
+        const auto bit = static_cast<juce::uint32> (1u << static_cast<unsigned> (slotIndex));
+
+        if (held)
+        {
+            if ((midiRequestedMask & bit) == 0)
+                triggeredMask.fetch_or (bit, std::memory_order_relaxed);   // atomic write is safe from this thread too
+
+            midiRequestedMask |= bit;
+        }
+        else
+        {
+            midiRequestedMask &= ~bit;
+        }
+    }
+
+    void ChordKeyboardEngine::releaseAllMidiHeldSlots() noexcept
+    {
+        midiRequestedMask = 0;
     }
 
     void ChordKeyboardEngine::reset() noexcept
     {
         requestedMask.store (0, std::memory_order_relaxed);
+        mouseMask.store (0, std::memory_order_relaxed);
         activeMaskForUi.store (0, std::memory_order_relaxed);
+        triggeredMask.store (0, std::memory_order_relaxed);
+
+        midiRequestedMask = 0;
         lastRenderedMask = 0;
 
         for (auto& voices : heldVoices)
@@ -61,125 +77,84 @@ namespace midiengine
             voices.notes.fill (-1);
         }
 
-        noteRefCount.fill (0);
         lastPlayedNotes.fill (-1);
         lastPlayedCount = 0;
     }
 
-    int ChordKeyboardEngine::chooseBestInversion (const musictheory::RtChordShape& rootPositionShape, int rootMidiNote) const noexcept
+    void ChordKeyboardEngine::rememberExternallyPlayedNotes (const int* notes, int count) noexcept
     {
-        if (lastPlayedCount <= 0 || rootPositionShape.toneCount <= 0)
-            return 0;   // nothing to voice-lead from yet -- root position
+        lastPlayedCount = juce::jlimit (0, musictheory::maxChordTones, count);
 
-        float lastCentroid = 0.0f;
         for (int i = 0; i < lastPlayedCount; ++i)
-            lastCentroid += static_cast<float> (lastPlayedNotes[static_cast<size_t> (i)]);
-        lastCentroid /= static_cast<float> (lastPlayedCount);
-
-        int bestInversion = 0;
-        float bestDistance = 1.0e9f;
-
-        for (int inversion = 0; inversion < rootPositionShape.toneCount; ++inversion)
-        {
-            const auto candidate = musictheory::invertShape (rootPositionShape, inversion);
-
-            float candidateCentroid = 0.0f;
-            for (int i = 0; i < candidate.toneCount; ++i)
-                candidateCentroid += static_cast<float> (rootMidiNote + candidate.semitoneOffsets[static_cast<size_t> (i)]);
-            candidateCentroid /= static_cast<float> (candidate.toneCount);
-
-            const float distance = std::abs (candidateCentroid - lastCentroid);
-
-            if (distance < bestDistance)
-            {
-                bestDistance = distance;
-                bestInversion = inversion;
-            }
-        }
-
-        return bestInversion;
+            lastPlayedNotes[static_cast<size_t> (i)] = notes[i];
     }
 
-    void ChordKeyboardEngine::noteOnSlot (juce::MidiBuffer& midiOut, int slot, const musictheory::RtChordShape& rootPositionShape,
+    float ChordKeyboardEngine::lastPlayedCentroid() const noexcept
+    {
+        if (lastPlayedCount <= 0)
+            return 0.0f;
+
+        float sum = 0.0f;
+        for (int i = 0; i < lastPlayedCount; ++i)
+            sum += static_cast<float> (lastPlayedNotes[static_cast<size_t> (i)]);
+
+        return sum / static_cast<float> (lastPlayedCount);
+    }
+
+    void ChordKeyboardEngine::noteOnSlot (juce::MidiBuffer& midiOut, NoteLedger& ledger, int slot,
+                                           const musictheory::RtChordShape& rootPositionShape, int anchorPitchClass,
                                            int rootOctaveOffset, int velocity, int midiChannel, bool autoInversion) noexcept
     {
-        const int referenceMidiNote = 60 + rootOctaveOffset * 12;
-        const int rootMidiNote = placeNearReference (rootPositionShape.rootPitchClass, referenceMidiNote);
+        const int anchorMidi = musictheory::anchorMidiNote (anchorPitchClass, rootOctaveOffset);
+        const int rootMidiNote = musictheory::placeRootAscending (rootPositionShape.rootPitchClass, anchorPitchClass, anchorMidi);
 
-        const auto shape = autoInversion
-                              ? musictheory::invertShape (rootPositionShape, chooseBestInversion (rootPositionShape, rootMidiNote))
-                              : rootPositionShape;
-
-        const int toneCount = juce::jlimit (0, musictheory::maxChordTones, shape.toneCount);
-        const auto clampedVelocity = static_cast<juce::uint8> (compensateVelocityForToneCount (velocity, toneCount));
+        const int inversion = (autoInversion && lastPlayedCount > 0)
+                                 ? musictheory::chooseInversionNearest (rootPositionShape, rootMidiNote, lastPlayedCentroid())
+                                 : 0;
 
         auto& voices = heldVoices[static_cast<size_t> (slot)];
-        voices.count = 0;
+        voices.count = musictheory::voiceShape (rootPositionShape, rootMidiNote, inversion, voices.notes);
 
-        for (int i = 0; i < toneCount; ++i)
-        {
-            const int note = juce::jlimit (0, 127, rootMidiNote + shape.semitoneOffsets[static_cast<size_t> (i)]);
+        const auto clampedVelocity = static_cast<juce::uint8> (musictheory::compensateVelocityForToneCount (velocity, voices.count));
 
-            voices.notes[static_cast<size_t> (voices.count)] = note;
-            ++voices.count;
-
-            auto& refCount = noteRefCount[static_cast<size_t> (note)];
-
-            // Only the first thing to need this exact MIDI note number
-            // actually triggers it -- if another slot already has it
-            // sounding (voicings can overlap), we just add our own claim
-            // on it via the ref count below.
-            if (refCount == 0)
-                midiOut.addEvent (juce::MidiMessage::noteOn (midiChannel, note, clampedVelocity), 0);
-
-            ++refCount;
-        }
+        for (int i = 0; i < voices.count; ++i)
+            ledger.noteOn (midiOut, midiChannel, voices.notes[static_cast<size_t> (i)], clampedVelocity, 0);
 
         // Remember what was actually played so the *next* chord (whichever
-        // slot that turns out to be) can voice-lead from it, regardless of
-        // whether this one is still held when that happens.
+        // slot, whenever it's triggered) can voice-lead from it.
         lastPlayedCount = voices.count;
         for (int i = 0; i < voices.count; ++i)
             lastPlayedNotes[static_cast<size_t> (i)] = voices.notes[static_cast<size_t> (i)];
     }
 
-    void ChordKeyboardEngine::noteOffSlot (juce::MidiBuffer& midiOut, int slot, int midiChannel) noexcept
+    void ChordKeyboardEngine::noteOffSlot (juce::MidiBuffer& midiOut, NoteLedger& ledger, int slot, int midiChannel) noexcept
     {
         auto& voices = heldVoices[static_cast<size_t> (slot)];
 
         for (int i = 0; i < voices.count; ++i)
-        {
-            const int note = voices.notes[static_cast<size_t> (i)];
-
-            if (note < 0 || note >= midiNoteCount)
-                continue;
-
-            auto& refCount = noteRefCount[static_cast<size_t> (note)];
-
-            if (refCount > 0)
-                --refCount;
-
-            // Only actually release the note once nothing else still
-            // claims it -- this is what stops a still-held slot from
-            // losing a note just because a different slot that happened
-            // to share it was released.
-            if (refCount == 0)
-                midiOut.addEvent (juce::MidiMessage::noteOff (midiChannel, note), 0);
-        }
+            ledger.noteOff (midiOut, midiChannel, voices.notes[static_cast<size_t> (i)], 0);
 
         voices.count = 0;
         voices.notes.fill (-1);
     }
 
-    void ChordKeyboardEngine::renderBlockStart (juce::MidiBuffer& midiOut,
+    void ChordKeyboardEngine::renderBlockStart (juce::MidiBuffer& midiOut, NoteLedger& ledger,
                                                  const musictheory::DiatonicShapeSet& currentShapes,
                                                  int rootOctaveOffset, int velocity, int midiChannel, bool autoInversion) noexcept
     {
-        const auto requested = requestedMask.load (std::memory_order_relaxed);
-        const auto changed = requested ^ lastRenderedMask;
+        const auto combined = requestedMask.load (std::memory_order_relaxed)
+                             | mouseMask.load (std::memory_order_relaxed)
+                             | midiRequestedMask;
+
+        const auto changed = combined ^ lastRenderedMask;
 
         if (changed == 0)
             return;
+
+        // Slot 0's root is always the scale tonic -- an override never
+        // changes a slot's root, only what's built on it -- so it's the
+        // fixed point every other slot's root is placed relative to.
+        const int anchorPitchClass = currentShapes.count > 0 ? currentShapes.shapes[0].rootPitchClass : 0;
 
         for (int slot = 0; slot < numSlots; ++slot)
         {
@@ -188,24 +163,24 @@ namespace midiengine
             if ((changed & bit) == 0)
                 continue;
 
-            const bool nowHeld = (requested & bit) != 0;
+            const bool nowHeld = (combined & bit) != 0;
 
             if (nowHeld)
             {
                 // A slot past the active scale's degree count (e.g. slots
-                // 5 and 6 on a 5-note pentatonic scale) has no diatonic
-                // chord to play -- pressing it is a no-op, not an error.
+                // 5-6 on a 5-note pentatonic scale) has no diatonic chord
+                // to play -- pressing it is a no-op, not an error.
                 if (slot < currentShapes.count)
-                    noteOnSlot (midiOut, slot, currentShapes.shapes[static_cast<size_t> (slot)],
-                                rootOctaveOffset, velocity, midiChannel, autoInversion);
+                    noteOnSlot (midiOut, ledger, slot, currentShapes.shapes[static_cast<size_t> (slot)],
+                                anchorPitchClass, rootOctaveOffset, velocity, midiChannel, autoInversion);
             }
             else
             {
-                noteOffSlot (midiOut, slot, midiChannel);
+                noteOffSlot (midiOut, ledger, slot, midiChannel);
             }
         }
 
-        lastRenderedMask = requested;
+        lastRenderedMask = combined;
 
         juce::uint32 uiMask = 0;
         for (int slot = 0; slot < numSlots; ++slot)
@@ -215,25 +190,14 @@ namespace midiengine
         activeMaskForUi.store (uiMask, std::memory_order_relaxed);
     }
 
-    void ChordKeyboardEngine::allNotesOff (juce::MidiBuffer& midiOut) noexcept
+    void ChordKeyboardEngine::allNotesOff (juce::MidiBuffer& midiOut, NoteLedger& ledger, int midiChannel) noexcept
     {
-        constexpr int midiChannel = 1;
-
-        for (int note = 0; note < midiNoteCount; ++note)
-        {
-            if (noteRefCount[static_cast<size_t> (note)] > 0)
-                midiOut.addEvent (juce::MidiMessage::noteOff (midiChannel, note), 0);
-
-            noteRefCount[static_cast<size_t> (note)] = 0;
-        }
-
-        for (auto& voices : heldVoices)
-        {
-            voices.count = 0;
-            voices.notes.fill (-1);
-        }
+        for (int slot = 0; slot < numSlots; ++slot)
+            noteOffSlot (midiOut, ledger, slot, midiChannel);
 
         requestedMask.store (0, std::memory_order_relaxed);
+        mouseMask.store (0, std::memory_order_relaxed);
+        midiRequestedMask = 0;
         lastRenderedMask = 0;
         activeMaskForUi.store (0, std::memory_order_relaxed);
         lastPlayedNotes.fill (-1);

@@ -45,7 +45,9 @@ add_executable(Tests
     Catch2Main.cpp
     MusicTheoryTests.cpp
     ChordOverrideTests.cpp
+    VoicingAndPresetsTests.cpp
     ProgressionModelTests.cpp
+    ProgressionActionsTests.cpp
 )
 
 target_include_directories(Tests PRIVATE ${CMAKE_SOURCE_DIR}/source)
@@ -57,6 +59,8 @@ target_sources(Tests PRIVATE
     ${CMAKE_SOURCE_DIR}/source/MusicTheory/Scale.cpp
     ${CMAKE_SOURCE_DIR}/source/MusicTheory/Chord.cpp
     ${CMAKE_SOURCE_DIR}/source/MusicTheory/MusicTheoryEngine.cpp
+    ${CMAKE_SOURCE_DIR}/source/MusicTheory/Voicing.cpp
+    ${CMAKE_SOURCE_DIR}/source/MusicTheory/Presets.cpp
     ${CMAKE_SOURCE_DIR}/source/Progression/ChordEvent.cpp
     ${CMAKE_SOURCE_DIR}/source/Progression/ProgressionModel.cpp
 )

@@ -52,7 +52,12 @@ target_sources("${PROJECT_NAME}" PRIVATE
     source/MusicTheory/Chord.cpp
     source/MusicTheory/MusicTheoryEngine.h
     source/MusicTheory/MusicTheoryEngine.cpp
+    source/MusicTheory/Voicing.h
+    source/MusicTheory/Voicing.cpp
+    source/MusicTheory/Presets.h
+    source/MusicTheory/Presets.cpp
 
+    source/Midi/NoteLedger.h
     source/Midi/ChordKeyboardEngine.h
     source/Midi/ChordKeyboardEngine.cpp
 
@@ -63,9 +68,16 @@ target_sources("${PROJECT_NAME}" PRIVATE
     source/Progression/ChordEvent.cpp
     source/Progression/ProgressionModel.h
     source/Progression/ProgressionModel.cpp
+    source/Progression/ProgressionActions.h
+
+    source/Timeline/SequencePlayer.h
+    source/Timeline/SequencePlayer.cpp
+    source/Timeline/TimelineComponent.h
+    source/Timeline/TimelineComponent.cpp
 
     source/Shared/HomeSeriesUI.h
     source/Shared/ChordEditPanel.h
+    source/Shared/SettingsPanel.h
 )
 
 target_include_directories("${PROJECT_NAME}" PRIVATE source)

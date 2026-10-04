@@ -5,13 +5,13 @@
 
 // =============================================================================
 // An ordered collection of ChordEvents -- the data model the progression
-// timeline (spec section 8) will eventually render and edit.
+// timeline renders and edits, and what SequencePlayer reads during playback.
 //
-// Deliberately minimal for now: no undo/redo, no sections, no loop range
-// (spec sections 30, 32, 11) -- those are built on top of this once the
-// timeline UI itself exists. What's here (add/remove/move/resize/
-// serialize) is fully implemented and unit tested, just not wired into the
-// processor's audio path or the editor yet.
+// This class itself has no undo/redo -- ProgressionActions.h supplies
+// juce::UndoableAction wrappers around it (Add/Remove/Update), so undo/redo
+// is layered on top rather than woven through every method here. Loop range
+// is owned by SequencePlayer (it's playback state, not progression content);
+// sections are not implemented.
 // =============================================================================
 
 namespace progression
@@ -24,11 +24,21 @@ namespace progression
         const ChordEvent& getEvent (int index) const;
 
         // Returns the new event's id. Events are kept sorted by startBeats.
+        // If event.id is already set (non-null), it's kept as-is -- this is
+        // what lets undo re-add a removed event under its original id.
         juce::Uuid addEvent (ChordEvent event);
 
         bool removeEvent (const juce::Uuid& id);
         bool moveEvent (const juce::Uuid& id, double newStartBeats);
         bool resizeEvent (const juce::Uuid& id, double newLengthBeats);
+
+        // Replaces an event's entire state in place (id is preserved
+        // regardless of what newState.id says), re-sorting if startBeats
+        // changed. The one primitive ProgressionActions' UpdateChordAction
+        // needs to cover every kind of edit (move, resize, quality,
+        // rhythm, bass, ...) with a single undoable action type.
+        bool replaceEvent (const juce::Uuid& id, ChordEvent newState);
+
         int indexOfEvent (const juce::Uuid& id) const;
         void clear() noexcept;
 

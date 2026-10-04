@@ -21,13 +21,20 @@ namespace musictheory
         return result;
     }
 
-    std::vector<ChordDefinition> buildDiatonicChords (int tonicPitchClass, ScaleType scale)
+    std::vector<ChordDefinition> buildDiatonicChords (int tonicPitchClass, ScaleType scale, NoteSpelling spelling)
     {
         std::vector<ChordDefinition> result;
 
         std::array<int, 8> semitones {};
         const int degreeCount = getScaleIntervals (scale, semitones);
-        const bool useFlats = prefersFlats (tonicPitchClass, scale);
+
+        bool useFlats;
+        switch (spelling)
+        {
+            case NoteSpelling::Sharps: useFlats = false; break;
+            case NoteSpelling::Flats:  useFlats = true;  break;
+            default:                   useFlats = prefersFlats (tonicPitchClass, scale); break;
+        }
 
         result.reserve (static_cast<size_t> (degreeCount));
 

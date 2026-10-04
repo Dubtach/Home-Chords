@@ -1,34 +1,42 @@
 #pragma once
 
+#include "NoteLedger.h"
 #include "../MusicTheory/MusicTheoryTypes.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <atomic>
 
 // =============================================================================
-// Turns "which of the 7 chord slots are currently held" into real MIDI
-// Note On / Note Off events, safely across the message thread (where key
-// presses happen) and the audio thread (where MIDI actually gets sent).
+// Turns "which of the 7 chord slots are currently held" into real MIDI Note
+// On / Note Off, safely across the message thread (computer keyboard, mouse)
+// and the audio thread (where MIDI is actually sent, and where an external
+// MIDI keyboard's notes arrive).
 //
-// Design notes, because getting this wrong is exactly how you get stuck
-// notes and wrong note-offs (see spec section 39):
+// Design notes, because getting this wrong is exactly how you get stuck notes:
 //
-// 1. The message thread never touches a juce::MidiBuffer or the audio
-//    thread's state directly. It only flips bits in an atomic mask.
+// 1. Other threads never touch a juce::MidiBuffer or this engine's audio-
+//    thread state. They only flip bits in atomic masks.
 //
-// 2. The audio thread captures the *actual* MIDI notes it played for a slot
-//    at the moment that slot went down, and releases exactly those notes
-//    when it goes up -- even if Key/Scale/Octave change while the chord is
-//    still held. Otherwise changing key mid-chord would either leave notes
-//    stuck on or turn off the wrong notes.
+// 2. The engine remembers the *actual* notes it played for a slot at the
+//    moment it went down, and releases exactly those notes -- even if Key,
+//    Scale or Octave change while the chord is held.
 //
-// 3. Two slots can legitimately share a MIDI note number (e.g. two chords
-//    that both contain the same pitch class in different octaves collide
-//    at the note-number level surprisingly often once voicing/inversions
-//    exist). A per-note reference count means a note only actually gets a
-//    Note Off once nothing still needs it.
+// 3. Every note goes through the shared NoteLedger, so slots (and the
+//    progression sequencer, via a different NoteLedger caller) that happen
+//    to share a MIDI note number can't cut each other off or double-release.
 //
-// 4. Everything here is fixed-size and allocation-free, so it's safe to
-//    call renderBlockStart() from processBlock() every single block.
+// 4. Three input sources are tracked as separate held-levels -- computer
+//    keyboard, mouse, external MIDI -- and OR'd together at render time, so
+//    releasing one can't release a chord another source is still holding.
+//    Mouse is kept separate from the "triggered" notification below because
+//    ADD mode appends a chord to the timeline on a keyboard/MIDI press but
+//    not on a mouse click (cards are clicked to preview or dragged to add).
+//
+// 5. "Triggered" (for ADD mode) is detected at the moment each setter sees
+//    its own rising edge, not by comparing held-levels once per block --
+//    the latter would miss a press that's released again before the next
+//    block gets a chance to look.
+//
+// Everything here is fixed-size and allocation-free.
 // =============================================================================
 
 namespace midiengine
@@ -40,44 +48,60 @@ namespace midiengine
 
         ChordKeyboardEngine() noexcept { reset(); }
 
-        // ---- Message thread ------------------------------------------------
+        // ---- Message thread -------------------------------------------------
 
-        // Called from the editor's key-handling whenever a tracked key's
-        // held state changes. Lock-free.
+        // Computer keyboard. Lock-free. Counts as an ADD-mode trigger.
         void setSlotHeld (int slotIndex, bool held) noexcept;
 
-        // Snapshot of which slots are currently sounding, for UI highlight
-        // animation. Safe to poll from a Timer.
+        // Mouse. Sounds the chord but never counts as an ADD-mode trigger.
+        void setSlotHeldFromMouse (int slotIndex, bool held) noexcept;
+
+        // Slots currently sounding, for the UI's highlight animation.
         juce::uint32 getActiveSlotMaskForUi() const noexcept
         {
             return activeMaskForUi.load (std::memory_order_relaxed);
         }
 
+        // Slots pressed (by keyboard or MIDI) since the last call -- what
+        // ADD mode appends to the timeline. Never misses a quick tap.
+        juce::uint32 consumeTriggeredSlots() noexcept
+        {
+            return triggeredMask.exchange (0, std::memory_order_relaxed);
+        }
+
         // ---- Audio thread ---------------------------------------------------
 
-        // Call once, at the very start of processBlock, before any other
-        // MIDI is added to `midiOut` this block. Diffs the requested mask
-        // against what was last acted on and emits Note On/Off for every
-        // slot that changed. All notes land at sample 0 of the block --
-        // keyboard input has no sample-accurate host timestamp to honour
-        // anyway, so this is a deliberate, simple, and safe choice rather
-        // than a compromise around a real constraint. When `autoInversion`
-        // is true, a newly-pressed chord is re-voiced into whichever
-        // inversion keeps it closest to the last chord that was played
-        // (see chooseBestInversion); when false, every chord plays in
-        // root position, as Phase 1 always did.
-        void renderBlockStart (juce::MidiBuffer& midiOut,
+        // External MIDI keyboard input (see PluginProcessor for the white-key
+        // mapping). Plain members, not atomics: only ever touched from the
+        // audio thread, same thread renderBlockStart runs on.
+        void setSlotHeldFromMidi (int slotIndex, bool held) noexcept;
+        void releaseAllMidiHeldSlots() noexcept;
+
+        // Call once per block, before other MIDI is added to midiOut. Emits
+        // Note On/Off for every slot whose combined (keyboard | mouse |
+        // MIDI) held state changed since the last call. All notes land at
+        // sample 0 -- keyboard input has no sample-accurate timestamp to
+        // honour, so this is a deliberate simplification. Each slot's root
+        // is placed by its distance above slot 0's root (the scale tonic --
+        // an override never changes a root), so the row ascends smoothly.
+        // With autoInversion, a new chord is re-voiced into whichever
+        // inversion sits closest to the last chord played (by any source,
+        // live or sequenced -- see MusicTheory/Voicing.h).
+        void renderBlockStart (juce::MidiBuffer& midiOut, NoteLedger& ledger,
                                 const musictheory::DiatonicShapeSet& currentShapes,
                                 int rootOctaveOffset, int velocity, int midiChannel, bool autoInversion) noexcept;
 
-        // Force every currently-sounding note off immediately (block
-        // start/stop, prepareToPlay, or the editor losing keyboard focus
-        // mid-chord). Safe to call from the audio thread.
-        void allNotesOff (juce::MidiBuffer& midiOut) noexcept;
+        // Releases everything this engine is holding (not other emitters'
+        // notes -- see NoteLedger), and forgets all held-key state.
+        void allNotesOff (juce::MidiBuffer& midiOut, NoteLedger& ledger, int midiChannel) noexcept;
 
-        // Resets all internal state (used from prepareToPlay). Does not
-        // emit MIDI -- callers that need a guaranteed-clean host state
-        // should call allNotesOff() first if any notes might be sounding.
+        // Feeds an externally-voiced chord (e.g. from the sequencer) into
+        // this engine's voice-leading memory, so the *next live-played*
+        // chord leads smoothly from whatever the timeline just played.
+        // Real-time safe; does not itself emit MIDI.
+        void rememberExternallyPlayedNotes (const int* notes, int count) noexcept;
+
+        // Resets internal state without emitting MIDI (prepareToPlay).
         void reset() noexcept;
 
     private:
@@ -87,34 +111,30 @@ namespace midiengine
             int count = 0;
         };
 
-        static constexpr int midiNoteCount = 128;
+        // Written by the message thread, read by the audio thread.
+        std::atomic<juce::uint32> requestedMask { 0 };   // computer keyboard, held level
+        std::atomic<juce::uint32> mouseMask { 0 };        // mouse, held level
 
-        std::atomic<juce::uint32> requestedMask { 0 };     // bit i = slot i held, written by message thread
-        std::atomic<juce::uint32> activeMaskForUi { 0 };   // bit i = slot i sounding, written by audio thread
+        // Written by the audio thread, read by the message thread.
+        std::atomic<juce::uint32> activeMaskForUi { 0 };
+        std::atomic<juce::uint32> triggeredMask { 0 };
 
-        juce::uint32 lastRenderedMask = 0;                          // audio-thread-only
-        std::array<SlotVoices, numSlots> heldVoices {};             // audio-thread-only
-        std::array<int, midiNoteCount> noteRefCount {};             // audio-thread-only
+        // Audio-thread-only.
+        juce::uint32 midiRequestedMask = 0;
+        juce::uint32 lastRenderedMask = 0;
+        std::array<SlotVoices, numSlots> heldVoices {};
 
-        // The actual MIDI notes of the most recently *triggered* chord
-        // (any slot, whether or not it's still held), used purely as the
-        // voice-leading reference point for whichever chord gets pressed
-        // next. Audio-thread-only, like everything else in this section.
+        // The actual notes of the most recently triggered chord (live or
+        // sequenced), purely as the voice-leading reference for whichever
+        // chord is triggered next.
         std::array<int, musictheory::maxChordTones> lastPlayedNotes {};
         int lastPlayedCount = 0;
 
-        void noteOnSlot (juce::MidiBuffer& midiOut, int slot, const musictheory::RtChordShape& rootPositionShape,
+        void noteOnSlot (juce::MidiBuffer& midiOut, NoteLedger& ledger, int slot,
+                          const musictheory::RtChordShape& rootPositionShape, int anchorPitchClass,
                           int rootOctaveOffset, int velocity, int midiChannel, bool autoInversion) noexcept;
-        void noteOffSlot (juce::MidiBuffer& midiOut, int slot, int midiChannel) noexcept;
-
-        // Evaluates every inversion of `rootPositionShape` (already placed
-        // with its root at `rootMidiNote`) and returns whichever one's
-        // centroid lands closest to the last chord's centroid -- a simple,
-        // deliberately bounded stand-in for full voice-leading: it never
-        // considers shifting the whole chord by an extra octave, only
-        // which of its own tones sit an octave up, so it can't wander into
-        // an extreme register even after a long chord sequence.
-        int chooseBestInversion (const musictheory::RtChordShape& rootPositionShape, int rootMidiNote) const noexcept;
+        void noteOffSlot (juce::MidiBuffer& midiOut, NoteLedger& ledger, int slot, int midiChannel) noexcept;
+        float lastPlayedCentroid() const noexcept;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChordKeyboardEngine)
     };

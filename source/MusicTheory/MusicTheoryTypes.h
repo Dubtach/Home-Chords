@@ -101,4 +101,14 @@ namespace musictheory
 
         bool isActive() const noexcept { return qualityOverride >= 0 || extension != Extension::None; }
     };
+
+    // How note names should be spelled for display. Auto uses each key's
+    // conventional bias (see Scale.h's prefersFlats); Sharps/Flats force
+    // every note name plugin-wide, overriding that per-key convention.
+    enum class NoteSpelling
+    {
+        Auto = 0,
+        Sharps,
+        Flats
+    };
 }
