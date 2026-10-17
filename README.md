@@ -10,7 +10,7 @@ build a progression on the timeline, complete with rhythm patterns, an
 arpeggiator, a bass system, and presets.
 
 > **This is still a work in progress**, built incrementally and tested
-> through real CI feedback rather than compiled locally. See
+> through real CI feedback plus a local compile-and-test review pass. See
 > [`STATUS.md`](STATUS.md) for exactly what's built, what's a deliberate
 > scope simplification, what's untouched, and — importantly — which parts
 > of the latest pass carry more risk than others and deserve extra

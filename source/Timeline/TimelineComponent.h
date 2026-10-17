@@ -2,6 +2,7 @@
 
 #include "../Progression/ProgressionModel.h"
 #include "../Progression/ProgressionActions.h"
+#include "SequencePlayer.h"
 #include "../Shared/HomeSeriesUI.h"
 #include <JuceHeader.h>
 #include <functional>
@@ -60,8 +61,11 @@ namespace timeline
         SequencePlayer& player;
         juce::UndoManager& undoManager;
 
-        juce::Uuid selectedId;
-        juce::Uuid dragEventId;
+        // NB: juce::Uuid() generates a fresh *random* id; "nothing" is
+        // Uuid::null(). Mixing the two up leaves a phantom selection.
+        juce::Uuid selectedId = juce::Uuid::null();
+        juce::Uuid dragEventId = juce::Uuid::null();
+        juce::uint32 lastSeenModelRevision = 0;
         bool draggingBody = false;
         bool draggingRightEdge = false;
         bool draggingLoopStart = false;
@@ -79,7 +83,7 @@ namespace timeline
         juce::Rectangle<float> blockBoundsFor (const progression::ChordEvent& event) const noexcept;
         const progression::ChordEvent* eventAt (int x, int y, bool* onRightEdge) const noexcept;
 
-        void timerCallback() override;   // repaints for the moving playhead
+        void timerCallback() override;   // repaints for the moving playhead, and when the model changed underneath us
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TimelineComponent)
     };

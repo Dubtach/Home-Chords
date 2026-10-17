@@ -273,9 +273,63 @@ look non-idiomatic on a few unusual combinations. See
   the practice the voice-leading pass adopted after the
   `Font::getStringWidth` mistake in Phase 1 (see the CI run log below).
 
+## Review & fix pass (Run 4)
+
+A compiler-and-test-driven review of the third pass, done against real JUCE
+(both the 8.0.8 tag and current `develop`), with every source file
+syntax-checked under clang and the unit tests built and run (also under
+ASan + UBSan). What it found and fixed:
+
+**CI break (Run 4 failure)**
+- `TimelineComponent.h` used `timeline::SequencePlayer` without including
+  `SequencePlayer.h`. The ~20 other errors in the log (`setWantsKeyboardFocus`,
+  `repaint`, `getWidth`, ...) were all cascades of that one missing type.
+- `paint()` called `removeFromBottom` on a `const` rectangle and called
+  `drawCardText` without its `homeUI::` prefix.
+
+**Real bugs found by review / the new tests**
+- *Undo*: nothing called `beginNewTransaction()`, so `juce::UndoManager`
+  merged every timeline edit into a single undo step. Every user gesture now
+  starts its own transaction (a preset is still one step, deliberately).
+- *Selection*: "nothing selected" was `juce::Uuid()`, which is a fresh random
+  id, not null -- so clicking empty timeline space never hid the toolbar. Now
+  `juce::Uuid::null()`. A selection deleted by undo/restore is cleared too.
+- *Data race*: the audio thread iterated the progression while the UI edited
+  it. `ProgressionModel` now has a spin lock (mutators take it; the sequencer
+  *try*-locks and skips a block rather than waiting) and a revision counter.
+- *State*: `getStateInformation` appended a new `PROGRESSION` child each save
+  without removing the one a previous load left behind, so load -> save ->
+  load restored the oldest progression. Undo history is also cleared on load.
+- *Stuck/silent notes*: the shared `NoteLedger` was never reset in
+  `prepareToPlay`/`releaseResources`, so stale counts could suppress later
+  Note Ons. A chord held with the mouse stayed on if the editor closed.
+- *Preview synth*: a host block larger than the prepared size produced
+  silence; it now renders in chunks.
+- *Loop timing*: a block crossing the loop end discarded its remainder, so
+  every pass ran up to one block long (measured 256-3000 samples). Blocks now
+  split at the loop end and carry on from the loop start; the period is exact
+  for any block size. Rhythm/arp pulses now land on their exact sample (they
+  used to be block-quantised) and can't fire at/after their event's end.
+
+**Test-only fixes**: the F-major test asked for sharps while expecting flats;
+the multi-action undo test relied on the (buggy) lack of transactions.
+
+**New tests (51 total, was 38)**: `SequencePlayerTests.cpp` (exact start/end
+samples at six block sizes, exact loop period at five, no stuck notes on
+wrap/delete/shrunk loop, arpeggio order, release-only-own-notes), plus
+revision/copy/round-trip tests for the model and a transaction-grouping test.
+
+**Still not covered by any automated test**: the editor wiring and the
+mouse-driven timeline gestures (they need a real UI), `Arpeggio`'s `arpGate`
+field (stored and saved but not yet applied -- each step is held until the
+next), and the Windows/macOS-specific CI steps (pluginval, packaging).
+
 ## Testing performed
 
-**Read this before trusting anything new in this pass.** Same sandbox
+**Read this before trusting anything new in this pass.** (This section is the
+original third-pass account, written without a compiler; the "Review & fix
+pass" above supersedes its risk claims for `SequencePlayer`, which now has
+real tests.) Same sandbox
 limits as every prior pass — no compiler, nothing here has been built —
 but this pass additionally has a real *risk gradient* worth being
 explicit about, because not all of the new code is equally trustworthy:
@@ -373,7 +427,7 @@ before the music-theory or undo-action layers.
   made (the `Attributes`-based parameter constructors, calling
   `setResizable(true, true)` before `setResizeLimits`) turned out to
   already match what current JUCE requires.
-- **Run 4 and beyond**: not yet attempted. Everything described in "this
+- **Run 4 (Windows, clang-cl)**: failed compiling `TimelineComponent.cpp` (missing `SequencePlayer.h` include plus the const/qualification errors) -- fixed in the "Review & fix pass" above. Beyond that, everything described in "this
   pass" above — the octave-bug fix, the timeline, rhythm engine,
   arpeggiator, bass system, presets, undo/redo, numeric/MIDI input, note
   spelling — is new since Run 3 and has not been compiled at all.

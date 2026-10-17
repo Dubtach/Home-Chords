@@ -271,26 +271,95 @@ namespace timeline
         if (! playing.load (std::memory_order_relaxed) || numSamples <= 0 || sampleRate <= 0.0)
             return;
 
+        // The message thread may be mid-edit (drag, undo, state restore).
+        // Never wait for it on the audio thread: skip this block's
+        // sequencing instead. The playhead simply doesn't advance for one
+        // block, which is inaudible and far better than a data race on the
+        // events vector.
+        const progression::ProgressionModel::Lock::ScopedTryLockType modelLock (model.getLock());
+        if (! modelLock.isLocked())
+            return;
+
         const double tempo = tempoBpm.load (std::memory_order_relaxed);
         const bool isLooping = looping.load (std::memory_order_relaxed);
         const double loopEnd = loopEndBeats.load (std::memory_order_relaxed);
         const double loopStart = loopStartBeats.load (std::memory_order_relaxed);
-
         const double beatsPerSample = (tempo / 60.0) / sampleRate;
-        const double spanStart = positionBeats.load (std::memory_order_relaxed);
-        double spanEnd = spanStart + static_cast<double> (numSamples) * beatsPerSample;
 
-        bool willWrap = false;
-        if (isLooping && spanEnd >= loopEnd)
+        double position = positionBeats.load (std::memory_order_relaxed);
+        // Events starting at or after this (and before the span end) are
+        // triggered. One sample of tolerance: after a loop wrap the playhead
+        // sits a fraction of a sample past the loop start, and an event
+        // exactly on the loop start must still fire. This can't double-
+        // trigger anything -- an event already sounding is never restarted,
+        // and events are far longer than one sample.
+        double startBound = position - beatsPerSample * 1.01;
+        int samplesDone = 0;
+
+        // Usually one pass. A block that crosses the loop end is split in
+        // two (or, for a very short loop, more): the first part renders up
+        // to the loop end, then playback continues from the loop start for
+        // the rest of the same block. Nothing is thrown away, so the loop
+        // period is exact for any block size.
+        for (int pass = 0; samplesDone < numSamples && pass < 8; ++pass)
         {
-            spanEnd = loopEnd;
-            willWrap = true;
+            const int remaining = numSamples - samplesDone;
+            const double spanStart = position;
+            double spanEnd = spanStart + static_cast<double> (remaining) * beatsPerSample;
+
+            const bool willWrap = isLooping && spanEnd >= loopEnd;
+            int segmentSamples = remaining;
+
+            if (willWrap)
+            {
+                const double samplesToLoopEnd = (loopEnd - spanStart) / beatsPerSample;
+                segmentSamples = juce::jlimit (0, remaining, static_cast<int> (std::ceil (samplesToLoopEnd - 1.0e-9)));
+                spanEnd = loopEnd;
+            }
+
+            renderSegment (model, midiOut, ledger, midiChannel, rootOctaveOffset, voiceLeadingSink,
+                           startBound, spanStart, spanEnd, beatsPerSample, samplesDone, segmentSamples);
+
+            if (willWrap)
+            {
+                // Everything still sounding ends with the pass.
+                const int releaseAt = juce::jmin (numSamples - 1, samplesDone + juce::jmax (0, segmentSamples - 1));
+
+                for (auto& runtime : activeRuntimes)
+                    if (runtime.inUse)
+                        freeRuntime (runtime, midiOut, ledger, midiChannel, releaseAt);
+
+                // Carry the sub-sample overshoot into the next pass so the
+                // average period is exactly the loop length.
+                const double overshoot = juce::jmax (0.0, spanStart + static_cast<double> (segmentSamples) * beatsPerSample - loopEnd);
+                position = loopStart + overshoot;
+                startBound = loopStart;   // an event sitting exactly on the loop start must still fire
+                samplesDone += segmentSamples;
+            }
+            else
+            {
+                position = spanEnd;
+                samplesDone = numSamples;
+            }
         }
 
+        positionBeats.store (position, std::memory_order_relaxed);
+    }
+
+    void SequencePlayer::renderSegment (const progression::ProgressionModel& model, juce::MidiBuffer& midiOut,
+                                         midiengine::NoteLedger& ledger, int midiChannel, int rootOctaveOffset,
+                                         midiengine::ChordKeyboardEngine* voiceLeadingSink,
+                                         double startBound, double spanStart, double spanEnd, double beatsPerSample,
+                                         int sampleBase, int segmentSamples) noexcept
+    {
+        const int lastOffset = juce::jmax (0, segmentSamples - 1);
+
+        // Absolute sample position within the whole block for a beat inside
+        // (or before/after) this segment, clamped to the segment.
         const auto beatToSample = [&] (double beat) noexcept -> int
         {
             const double raw = (beat - spanStart) / beatsPerSample;
-            return juce::jlimit (0, juce::jmax (0, numSamples - 1), static_cast<int> (std::llround (raw)));
+            return sampleBase + static_cast<int> (std::llround (juce::jlimit (0.0, static_cast<double> (lastOffset), raw)));
         };
 
         // Start any event beginning in this span that isn't already active.
@@ -301,11 +370,11 @@ namespace timeline
             if (! event.enabled)
                 continue;
 
-            if (event.startBeats >= spanStart && event.startBeats < spanEnd && findRuntimeFor (event.id) == nullptr)
+            if (event.startBeats >= startBound && event.startBeats < spanEnd && findRuntimeFor (event.id) == nullptr)
                 startEvent (event, midiOut, ledger, midiChannel, beatToSample (event.startBeats), rootOctaveOffset, voiceLeadingSink);
         }
 
-        // Advance (end, or pulse) every currently-active event.
+        // Advance (pulse, then end) every currently-active event.
         for (auto& runtime : activeRuntimes)
         {
             if (! runtime.inUse)
@@ -325,36 +394,27 @@ namespace timeline
             // that as "ended right now" rather than risk a stuck note.
             if (eventPtr == nullptr || ! eventPtr->enabled)
             {
-                freeRuntime (runtime, midiOut, ledger, midiChannel, 0);
+                freeRuntime (runtime, midiOut, ledger, midiChannel, sampleBase);
                 continue;
+            }
+
+            // Repeating pulses (rhythm subdivisions, arp steps) land on
+            // their exact sample. Bounded, and only before the event's own
+            // end, so a pulse can't fire after (or on) its event's last beat.
+            const double pulseLimit = juce::jmin (spanEnd, eventPtr->endBeats());
+
+            for (int guard = 0; guard < 32 && runtime.nextPulseBeat > 0.0 && runtime.nextPulseBeat < pulseLimit; ++guard)
+            {
+                const int pulseSample = beatToSample (runtime.nextPulseBeat);
+
+                if (eventPtr->rhythm == progression::RhythmPattern::Arpeggio)
+                    advanceArp (*eventPtr, runtime, midiOut, ledger, midiChannel, pulseSample, rootOctaveOffset);
+                else
+                    retriggerEvent (*eventPtr, runtime, midiOut, ledger, midiChannel, pulseSample, rootOctaveOffset);
             }
 
             if (eventPtr->endBeats() <= spanEnd)
-            {
                 freeRuntime (runtime, midiOut, ledger, midiChannel, beatToSample (eventPtr->endBeats()));
-                continue;
-            }
-
-            if (runtime.nextPulseBeat > 0.0 && runtime.nextPulseBeat < spanEnd)
-            {
-                if (eventPtr->rhythm == progression::RhythmPattern::Arpeggio)
-                    advanceArp (*eventPtr, runtime, midiOut, ledger, midiChannel, 0, rootOctaveOffset);
-                else
-                    retriggerEvent (*eventPtr, runtime, midiOut, ledger, midiChannel, 0, rootOctaveOffset);
-            }
-        }
-
-        if (willWrap)
-        {
-            for (auto& runtime : activeRuntimes)
-                if (runtime.inUse)
-                    freeRuntime (runtime, midiOut, ledger, midiChannel, juce::jmax (0, numSamples - 1));
-
-            positionBeats.store (loopStart, std::memory_order_relaxed);
-        }
-        else
-        {
-            positionBeats.store (spanEnd, std::memory_order_relaxed);
         }
     }
 

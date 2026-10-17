@@ -168,5 +168,16 @@ private:
     std::array<std::atomic<float>*, musictheory::maxDiatonicSlots> qualityOverrideParams {};
     std::array<std::atomic<float>*, musictheory::maxDiatonicSlots> extensionOverrideParams {};
 
+    // Same idea for the parameters processBlock reads every block (a lookup
+    // by string ID per block is avoidable work on the audio thread).
+    std::atomic<float>* keyParam = nullptr;
+    std::atomic<float>* scaleParam = nullptr;
+    std::atomic<float>* octaveParam = nullptr;
+    std::atomic<float>* velocityParam = nullptr;
+    std::atomic<float>* previewGainParam = nullptr;
+    std::atomic<float>* autoInversionParam = nullptr;
+    std::atomic<float>* tempoParam = nullptr;
+    std::atomic<float>* loopEnabledParam = nullptr;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HomeChordsAudioProcessor)
 };

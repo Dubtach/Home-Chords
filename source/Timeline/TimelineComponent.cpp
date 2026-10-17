@@ -9,6 +9,7 @@ namespace timeline
         : model (modelIn), player (playerIn), undoManager (undoManagerIn)
     {
         setWantsKeyboardFocus (false);
+        lastSeenModelRevision = model.getRevision();
         startTimerHz (30);
     }
 
@@ -147,8 +148,9 @@ namespace timeline
             {
                 static const juce::StringArray rhythmGlyphs { "sus", "1", "1/2", "1/4", "1/8", "1/16", "strum", "arp" };
                 const auto label = rhythmGlyphs[juce::jlimit (0, rhythmGlyphs.size() - 1, static_cast<int> (event.rhythm))];
-                auto tag = bounds.removeFromBottom (juce::jmin (12.0f, bounds.getHeight() * 0.3f)).reduced (4.0f, 0.0f);
-                drawCardText (g, label, tag, 8.5f, juce::Justification::centredLeft, 0.7f);
+                auto tagSource = bounds;   // bounds is const; removeFromBottom mutates its receiver
+                auto tag = tagSource.removeFromBottom (juce::jmin (12.0f, bounds.getHeight() * 0.3f)).reduced (4.0f, 0.0f);
+                homeUI::drawCardText (g, label, tag, 8.5f, juce::Justification::centredLeft, 0.7f);
             }
         }
 
@@ -210,13 +212,18 @@ namespace timeline
         }
         else
         {
-            selectedId = juce::Uuid();
+            selectedId = juce::Uuid::null();
             draggingBody = false;
             draggingRightEdge = false;
         }
 
         if (onSelectionChanged != nullptr)
             onSelectionChanged (selectedId.isNull() ? nullptr : &selectedId);
+
+        // This component doesn't take keyboard focus itself, but clicking in
+        // it shouldn't leave the chord keys dead after a combo box had focus.
+        if (auto* parent = getParentComponent())
+            parent->grabKeyboardFocus();
 
         repaint();
     }
@@ -275,6 +282,7 @@ namespace timeline
                     // drag gesture, not one per mouseDrag callback.
                     model.moveEvent (dragEventId, dragStartBeats);
                     model.resizeEvent (dragEventId, dragStartLength);
+                    undoManager.beginNewTransaction ("Edit chord");
                     undoManager.perform (new progression::UpdateChordAction (model, dragEventId, liveState));
                 }
             }
@@ -300,8 +308,9 @@ namespace timeline
         if (selectedId.isNull())
             return;
 
+        undoManager.beginNewTransaction ("Delete chord");
         undoManager.perform (new progression::RemoveChordAction (model, selectedId));
-        selectedId = juce::Uuid();
+        selectedId = juce::Uuid::null();
 
         if (onSelectionChanged != nullptr)
             onSelectionChanged (nullptr);
@@ -319,6 +328,7 @@ namespace timeline
         copy.id = juce::Uuid();
         copy.startBeats = copy.endBeats();   // place immediately after the original
 
+        undoManager.beginNewTransaction ("Duplicate chord");
         undoManager.perform (new progression::AddChordAction (model, copy));
         repaint();
     }
@@ -328,6 +338,7 @@ namespace timeline
         if (selectedId.isNull())
             return;
 
+        undoManager.beginNewTransaction ("Edit chord");
         undoManager.perform (new progression::UpdateChordAction (model, selectedId, newState));
         repaint();
     }
@@ -339,7 +350,27 @@ namespace timeline
 
     void TimelineComponent::timerCallback()
     {
-        if (player.isPlaying())
+        // Repaint while the playhead moves, and whenever the model changed
+        // without going through this component (host state restore, undo
+        // via a shortcut, ADD mode, presets) -- cheaper and more reliable
+        // than every caller remembering to call refreshFromModel().
+        const auto revision = model.getRevision();
+        const bool modelChanged = (revision != lastSeenModelRevision);
+        lastSeenModelRevision = revision;
+
+        if (modelChanged)
+        {
+            // The selection may have been deleted by an undo or a restore.
+            if (! selectedId.isNull() && model.indexOfEvent (selectedId) < 0)
+            {
+                selectedId = juce::Uuid::null();
+
+                if (onSelectionChanged != nullptr)
+                    onSelectionChanged (nullptr);
+            }
+        }
+
+        if (modelChanged || player.isPlaying())
             repaint();
     }
 }

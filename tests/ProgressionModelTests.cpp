@@ -196,3 +196,99 @@ TEST_CASE ("fromValueTree on an invalid tree yields an empty model rather than c
     const auto restored = ProgressionModel::fromValueTree (juce::ValueTree());
     CHECK (restored.isEmpty());
 }
+
+TEST_CASE ("Every mutation bumps the revision counter", "[progression][revision]")
+{
+    ProgressionModel model;
+    auto last = model.getRevision();
+
+    const auto expectBump = [&] (const char* what)
+    {
+        INFO (what);
+        CHECK (model.getRevision() != last);
+        last = model.getRevision();
+    };
+
+    ChordEvent event;
+    event.startBeats = 0.0;
+    event.lengthBeats = 4.0;
+    const auto id = model.addEvent (event);
+    expectBump ("addEvent");
+
+    model.moveEvent (id, 2.0);
+    expectBump ("moveEvent");
+
+    model.resizeEvent (id, 1.0);
+    expectBump ("resizeEvent");
+
+    auto replacement = model.getEvent (0);
+    replacement.velocity = 64;
+    model.replaceEvent (id, replacement);
+    expectBump ("replaceEvent");
+
+    model.removeEvent (id);
+    expectBump ("removeEvent");
+
+    model.clear();
+    expectBump ("clear");
+
+    // Failed operations change nothing, so they must not look like changes.
+    model.moveEvent (juce::Uuid(), 1.0);
+    CHECK (model.getRevision() == last);
+}
+
+TEST_CASE ("Copying and assigning a model copies its events only", "[progression][revision]")
+{
+    ProgressionModel source;
+
+    ChordEvent a, b;
+    a.startBeats = 0.0;
+    b.startBeats = 4.0;
+    source.addEvent (a);
+    source.addEvent (b);
+
+    const ProgressionModel copy (source);
+    CHECK (copy.size() == 2);
+
+    ProgressionModel target;
+    const auto revisionBefore = target.getRevision();
+    target = source;
+
+    CHECK (target.size() == 2);
+    CHECK (target.getEvent (1).startBeats == 4.0);
+    CHECK (target.getRevision() != revisionBefore);   // assignment counts as a change (the timeline repaints on it)
+
+    // Independent afterwards.
+    target.clear();
+    CHECK (source.size() == 2);
+}
+
+TEST_CASE ("A model survives a ValueTree round trip with identical events", "[progression][state]")
+{
+    ProgressionModel model;
+
+    ChordEvent event;
+    event.rootPitchClass = 7;
+    event.quality = ChordQuality::Minor;
+    event.startBeats = 3.5;
+    event.lengthBeats = 2.25;
+    event.rhythm = RhythmPattern::Arpeggio;
+    event.arpMode = ArpMode::UpDown;
+    event.bassMode = BassMode::Custom;
+    event.customBassPitchClass = 2;
+    const auto id = model.addEvent (event);
+
+    const auto restored = ProgressionModel::fromValueTree (model.toValueTree());
+    REQUIRE (restored.size() == 1);
+
+    const auto& e = restored.getEvent (0);
+    CHECK (e.id == id);
+    CHECK (e.rootPitchClass == 7);
+    CHECK (e.quality == ChordQuality::Minor);
+    CHECK (e.startBeats == 3.5);
+    CHECK (e.lengthBeats == 2.25);
+    CHECK (e.rhythm == RhythmPattern::Arpeggio);
+    CHECK (e.arpMode == ArpMode::UpDown);
+    CHECK (e.bassMode == BassMode::Custom);
+    CHECK (e.customBassPitchClass == 2);
+}

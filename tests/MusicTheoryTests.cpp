@@ -193,7 +193,9 @@ TEST_CASE ("F Major spells with flats", "[musictheory][enharmonic]")
 
     SECTION ("vii\u00b0 root spells as E, and its 5th spells as Bb not A#")
     {
-        const auto tones = tonesOf (chords[6]);
+        // chordToneNames() takes the spelling explicitly; F Major is a
+        // flat key, so ask for flats (the default is sharps).
+        const auto tones = tonesOf (chords[6], true);
         CHECK_THAT (tones[0].toStdString(), Equals ("E"));
         CHECK_THAT (tones[2].toStdString(), Equals ("Bb"));
     }

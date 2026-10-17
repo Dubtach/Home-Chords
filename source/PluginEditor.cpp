@@ -181,6 +181,7 @@ HomeChordsAudioProcessorEditor::~HomeChordsAudioProcessorEditor()
     processor.apvts.removeParameterListener ("SCALE", this);
     processor.apvts.removeParameterListener ("NOTE_SPELLING", this);
     releaseAllHeldSlots();
+    releaseAllMouseSlots();
 }
 
 void HomeChordsAudioProcessorEditor::resized()
@@ -350,9 +351,14 @@ bool HomeChordsAudioProcessorEditor::keyStateChanged (bool /*isKeyDown*/)
 void HomeChordsAudioProcessorEditor::visibilityChanged()
 {
     if (isVisible())
+    {
         grabKeyboardFocus();
+    }
     else
+    {
         releaseAllHeldSlots();
+        releaseAllMouseSlots();
+    }
 }
 
 void HomeChordsAudioProcessorEditor::mouseDown (const juce::MouseEvent&)
@@ -457,6 +463,14 @@ void HomeChordsAudioProcessorEditor::releaseAllHeldSlots()
     }
 }
 
+void HomeChordsAudioProcessorEditor::releaseAllMouseSlots()
+{
+    // A chord auditioned with the mouse never gets its mouseUp if the
+    // editor is closed or hidden mid-click, which would leave it sounding.
+    for (int i = 0; i < musictheory::maxDiatonicSlots; ++i)
+        processor.setChordSlotHeldFromMouse (i, false);
+}
+
 void HomeChordsAudioProcessorEditor::showChordEditor (int slot)
 {
     if (slot < 0 || slot >= currentSlotCount)
@@ -523,7 +537,7 @@ void HomeChordsAudioProcessorEditor::showSettingsPanel()
 void HomeChordsAudioProcessorEditor::updateSelectedEventToolbar (const juce::Uuid* id)
 {
     somethingSelected = (id != nullptr);
-    selectedEventId = (id != nullptr) ? *id : juce::Uuid();
+    selectedEventId = (id != nullptr) ? *id : juce::Uuid::null();
 
     for (auto* box : { &rhythmBox, &bassBox, &arpModeBox, &arpRateBox })
         box->setVisible (somethingSelected);

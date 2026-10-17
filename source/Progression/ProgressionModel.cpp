@@ -4,6 +4,26 @@
 
 namespace progression
 {
+    ProgressionModel::ProgressionModel (const ProgressionModel& other)
+        : events (other.events)
+    {
+    }
+
+    ProgressionModel& ProgressionModel::operator= (const ProgressionModel& other)
+    {
+        if (this != &other)
+        {
+            auto copy = other.events;   // allocate outside the lock
+            {
+                const Lock::ScopedLockType sl (lock);
+                events.swap (copy);
+            }   // `copy` (the old events) is freed after the lock is released
+            markChanged();
+        }
+
+        return *this;
+    }
+
     const ChordEvent& ProgressionModel::getEvent (int index) const
     {
         jassert (index >= 0 && index < size());
@@ -16,8 +36,14 @@ namespace progression
             event.id = juce::Uuid();
 
         const auto id = event.id;
-        events.push_back (std::move (event));
-        sortEvents();
+
+        {
+            const Lock::ScopedLockType sl (lock);
+            events.push_back (std::move (event));
+            sortEvents();
+        }
+
+        markChanged();
         return id;
     }
 
@@ -29,7 +55,12 @@ namespace progression
         if (it == events.end())
             return false;
 
-        events.erase (it);
+        {
+            const Lock::ScopedLockType sl (lock);
+            events.erase (it);
+        }
+
+        markChanged();
         return true;
     }
 
@@ -39,8 +70,13 @@ namespace progression
         if (index < 0)
             return false;
 
-        events[static_cast<size_t> (index)].startBeats = juce::jmax (0.0, newStartBeats);
-        sortEvents();
+        {
+            const Lock::ScopedLockType sl (lock);
+            events[static_cast<size_t> (index)].startBeats = juce::jmax (0.0, newStartBeats);
+            sortEvents();
+        }
+
+        markChanged();
         return true;
     }
 
@@ -52,7 +88,12 @@ namespace progression
 
         // Floor at a 1/16 note (at 4/4, a quarter note = 1 beat) so a drag
         // can never collapse an event to zero or negative length.
-        events[static_cast<size_t> (index)].lengthBeats = juce::jmax (0.0625, newLengthBeats);
+        {
+            const Lock::ScopedLockType sl (lock);
+            events[static_cast<size_t> (index)].lengthBeats = juce::jmax (0.0625, newLengthBeats);
+        }
+
+        markChanged();
         return true;
     }
 
@@ -63,8 +104,13 @@ namespace progression
             return false;
 
         newState.id = id;   // never let a caller accidentally reassign the id via this path
-        events[static_cast<size_t> (index)] = newState;
-        sortEvents();
+        {
+            const Lock::ScopedLockType sl (lock);
+            events[static_cast<size_t> (index)] = std::move (newState);
+            sortEvents();
+        }
+
+        markChanged();
         return true;
     }
 
@@ -79,7 +125,12 @@ namespace progression
 
     void ProgressionModel::clear() noexcept
     {
-        events.clear();
+        {
+            const Lock::ScopedLockType sl (lock);
+            events.clear();
+        }
+
+        markChanged();
     }
 
     double ProgressionModel::getTotalLengthBeats() const noexcept

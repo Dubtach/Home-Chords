@@ -48,12 +48,13 @@ add_executable(Tests
     VoicingAndPresetsTests.cpp
     ProgressionModelTests.cpp
     ProgressionActionsTests.cpp
+    SequencePlayerTests.cpp
 )
 
 target_include_directories(Tests PRIVATE ${CMAKE_SOURCE_DIR}/source)
 
-# Only the plain-C++ layers (music theory + progression model) are tested
-# directly -- PluginProcessor/PluginEditor need a full JUCE plugin host
+# Only the plain-C++ layers (music theory, progression model, and the
+# sequencer engine) are tested directly -- PluginProcessor/PluginEditor need a full JUCE plugin host
 # context and aren't included here.
 target_sources(Tests PRIVATE
     ${CMAKE_SOURCE_DIR}/source/MusicTheory/Scale.cpp
@@ -63,11 +64,14 @@ target_sources(Tests PRIVATE
     ${CMAKE_SOURCE_DIR}/source/MusicTheory/Presets.cpp
     ${CMAKE_SOURCE_DIR}/source/Progression/ChordEvent.cpp
     ${CMAKE_SOURCE_DIR}/source/Progression/ProgressionModel.cpp
+    ${CMAKE_SOURCE_DIR}/source/Midi/ChordKeyboardEngine.cpp
+    ${CMAKE_SOURCE_DIR}/source/Timeline/SequencePlayer.cpp
 )
 
 target_link_libraries(Tests PRIVATE
     Catch2::Catch2
     juce::juce_core
+    juce::juce_audio_basics
     juce::juce_data_structures
     juce::juce_gui_basics
 )

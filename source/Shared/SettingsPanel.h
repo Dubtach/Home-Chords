@@ -98,7 +98,7 @@ namespace homeUI
                 button->setToggleState (i == selectedIndex, juce::dontSendNotification);
 
                 auto* rowPtr = &row;
-                button->onClick = [this, rowPtr, i, onChosen]
+                button->onClick = [rowPtr, i, onChosen]
                 {
                     for (auto& b : *rowPtr)
                         b->setToggleState (false, juce::dontSendNotification);

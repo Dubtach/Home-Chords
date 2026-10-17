@@ -59,6 +59,7 @@ namespace preview
 
         std::array<Voice, maxVoices> voices;
 
+        void renderChunk (juce::AudioBuffer<float>& buffer, int startSample, int numSamples) noexcept;
         Voice* findFreeVoice() noexcept;
         Voice* findVoiceForNote (int midiNote) noexcept;
 

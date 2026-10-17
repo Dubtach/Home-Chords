@@ -92,7 +92,21 @@ namespace preview
 
     void PreviewSynth::renderBlock (juce::AudioBuffer<float>& buffer, int startSample, int numSamples) noexcept
     {
-        if (numSamples <= 0 || numSamples > scratchMono.getNumSamples())
+        // A host may legally deliver a block larger than the maximum it
+        // announced in prepareToPlay. Render in scratch-sized chunks rather
+        // than dropping the block (which would be silence).
+        const int chunkSize = scratchMono.getNumSamples();
+
+        if (chunkSize <= 0)
+            return;
+
+        for (int done = 0; done < numSamples; done += chunkSize)
+            renderChunk (buffer, startSample + done, juce::jmin (chunkSize, numSamples - done));
+    }
+
+    void PreviewSynth::renderChunk (juce::AudioBuffer<float>& buffer, int startSample, int numSamples) noexcept
+    {
+        if (numSamples <= 0)
             return;
 
         scratchMono.clear (0, 0, numSamples);

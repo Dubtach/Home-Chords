@@ -22,12 +22,16 @@
 // playhead. Everything else (per-event runtime state) is audio-thread-only,
 // touched only from inside advanceAndRender/reset.
 //
-// Precision trade-off, deliberate: an event's start and end are placed at
-// the *exact* interpolated sample within the block they fall in, so notes
-// never drift and never get stuck. Rhythm subdivisions and arpeggio steps
-// *within* an event are checked once per block and land at that block's
-// first sample if due -- block-quantized, same granularity live keyboard
-// input already uses, and inaudible at normal block sizes.
+// Timing: an event's start and end, and every rhythm subdivision / arpeggio
+// step inside it, are placed at the exact interpolated sample within the
+// block they fall in, so notes never drift and never get stuck. A block that
+// crosses the loop end is split: it renders up to the loop end, then carries
+// on from the loop start for the rest of the same block, so the loop period
+// is exact for any block size.
+//
+// The model is read under its spin lock via a *try*-lock: if the message
+// thread is mid-edit the block's sequencing is skipped rather than waited
+// for (see ProgressionModel.h).
 //
 // Real-time safe: fixed-size, no allocation once prepare() has run.
 // =============================================================================
@@ -109,6 +113,18 @@ namespace timeline
 
         // Audio-thread-only.
         std::array<ActiveRuntime, maxActiveEvents> activeRuntimes {};
+
+        // Renders [spanStart, spanEnd) beats, which occupy `segmentSamples`
+        // samples starting at `sampleBase` within the current block.
+        // `startBound` is the lower bound for triggering event starts (it
+        // equals spanStart, except right after a loop wrap where it is the
+        // loop start so an event exactly on it still fires). Audio thread
+        // only; the caller holds the model's lock.
+        void renderSegment (const progression::ProgressionModel& model, juce::MidiBuffer& midiOut,
+                            midiengine::NoteLedger& ledger, int midiChannel, int rootOctaveOffset,
+                            midiengine::ChordKeyboardEngine* voiceLeadingSink,
+                            double startBound, double spanStart, double spanEnd, double beatsPerSample,
+                            int sampleBase, int segmentSamples) noexcept;
 
         ActiveRuntime* findRuntimeFor (const juce::Uuid& id) noexcept;
         ActiveRuntime* allocateRuntimeFor (const juce::Uuid& id) noexcept;

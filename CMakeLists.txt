@@ -82,14 +82,22 @@ target_sources("${PROJECT_NAME}" PRIVATE
 
 target_include_directories("${PROJECT_NAME}" PRIVATE source)
 
-target_link_libraries("${PROJECT_NAME}" PRIVATE
-    juce::juce_audio_utils
-    juce::juce_audio_processors
-    juce::juce_dsp
+target_link_libraries("${PROJECT_NAME}"
+    PRIVATE
+        juce::juce_audio_utils
+        juce::juce_audio_processors
+        juce::juce_dsp
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags
 )
 
+# This plugin has no web view and makes no network calls, so don't build
+# (or depend on) JUCE's WebBrowserComponent / CURL support.
 target_compile_definitions("${PROJECT_NAME}" PUBLIC
     JUCE_VST3_CAN_REPLACE_VST2=0
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
 )
 
 # ---------------------------------------------------------------------------

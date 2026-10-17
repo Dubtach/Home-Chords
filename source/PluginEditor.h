@@ -76,7 +76,7 @@ private:
     juce::TextButton deleteEventButton { "Delete" };
     juce::TextButton duplicateEventButton { "Duplicate" };
     bool somethingSelected = false;
-    juce::Uuid selectedEventId;
+    juce::Uuid selectedEventId = juce::Uuid::null();
 
     using ComboBoxAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
     using SliderAttachment   = juce::AudioProcessorValueTreeState::SliderAttachment;
@@ -97,7 +97,8 @@ private:
     void parameterChanged (const juce::String& parameterID, float newValue) override;
     void refreshChordCards();
     void nudgeOctave (int delta);
-    void releaseAllHeldSlots();
+    void releaseAllHeldSlots();        // computer-keyboard slots only (e.g. on focus loss)
+    void releaseAllMouseSlots();       // mouse-held slots (e.g. editor hidden/closed mid-click)
     void showChordEditor (int slot);
     void showSettingsPanel();
     void updateSelectedEventToolbar (const juce::Uuid* id);

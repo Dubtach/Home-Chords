@@ -85,8 +85,14 @@ TEST_CASE ("Multiple actions undo in reverse order, redo in forward order", "[pr
     b.rootPitchClass = 2;
     c.rootPitchClass = 4;
 
+    // Each user gesture is its own transaction, exactly as the editor does
+    // it -- without beginNewTransaction(), juce::UndoManager merges
+    // consecutive perform() calls into one undo step.
+    undoManager.beginNewTransaction();
     undoManager.perform (new AddChordAction (model, a));
+    undoManager.beginNewTransaction();
     undoManager.perform (new AddChordAction (model, b));
+    undoManager.beginNewTransaction();
     undoManager.perform (new AddChordAction (model, c));
     REQUIRE (model.size() == 3);
 
@@ -121,4 +127,28 @@ TEST_CASE ("ClearProgressionAction restores every event on undo", "[progression]
     REQUIRE (model.size() == 2);
     CHECK (model.getEvent (0).rootPitchClass == 0);
     CHECK (model.getEvent (1).rootPitchClass == 5);
+}
+
+TEST_CASE ("Actions in one transaction undo together", "[progression][undo]")
+{
+    // Guards the behaviour applyPreset() relies on (Clear + N adds as a
+    // single undo step), and documents why every other edit path must call
+    // beginNewTransaction() first.
+    ProgressionModel model;
+    juce::UndoManager undoManager;
+
+    ChordEvent a, b;
+    a.rootPitchClass = 0;
+    b.rootPitchClass = 2;
+
+    undoManager.beginNewTransaction();
+    undoManager.perform (new AddChordAction (model, a));
+    undoManager.perform (new AddChordAction (model, b));
+    REQUIRE (model.size() == 2);
+
+    undoManager.undo();
+    CHECK (model.size() == 0);
+
+    undoManager.redo();
+    CHECK (model.size() == 2);
 }

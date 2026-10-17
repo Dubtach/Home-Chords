@@ -40,6 +40,15 @@ HomeChordsAudioProcessor::HomeChordsAudioProcessor()
         extensionOverrideParams[static_cast<size_t> (slot)] = apvts.getRawParameterValue (extensionParamId (slot));
     }
 
+    keyParam           = apvts.getRawParameterValue ("KEY");
+    scaleParam         = apvts.getRawParameterValue ("SCALE");
+    octaveParam        = apvts.getRawParameterValue ("OCTAVE");
+    velocityParam      = apvts.getRawParameterValue ("VELOCITY");
+    previewGainParam   = apvts.getRawParameterValue ("PREVIEW_GAIN");
+    autoInversionParam = apvts.getRawParameterValue ("AUTO_INVERSION");
+    tempoParam         = apvts.getRawParameterValue ("TEMPO");
+    loopEnabledParam   = apvts.getRawParameterValue ("LOOP_ENABLED");
+
     sequencePlayer.setLoopRange (0.0, 16.0);
 }
 
@@ -119,12 +128,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout HomeChordsAudioProcessor::cr
 
 int HomeChordsAudioProcessor::getKeyTonicPitchClass() const noexcept
 {
-    return static_cast<int> (apvts.getRawParameterValue ("KEY")->load());
+    return static_cast<int> (keyParam->load());
 }
 
 musictheory::ScaleType HomeChordsAudioProcessor::getScaleType() const noexcept
 {
-    const auto index = static_cast<int> (apvts.getRawParameterValue ("SCALE")->load());
+    const auto index = static_cast<int> (scaleParam->load());
     return static_cast<musictheory::ScaleType> (juce::jlimit (0, musictheory::numScaleTypes - 1, index));
 }
 
@@ -237,6 +246,8 @@ void HomeChordsAudioProcessor::addChordFromSlotToTimeline (int slot)
     event.startBeats = progression.getTotalLengthBeats();
     event.lengthBeats = getBeatsPerBar();
 
+    // One undo step per chord added (ADD mode can append several in a row).
+    undoManager.beginNewTransaction ("Add chord");
     undoManager.perform (new progression::AddChordAction (progression, event));
 }
 
@@ -258,6 +269,7 @@ void HomeChordsAudioProcessor::prepareToPlay (double newSampleRate, int samplesP
 {
     sampleRate = newSampleRate;
     keyboardEngine.reset();
+    noteLedger.reset();   // the engines above forgot their notes, so the shared reference counts must be forgotten too -- stale counts would suppress future Note Ons
     sequencePlayer.prepare (sampleRate);
     previewSynth.prepare (sampleRate, samplesPerBlock);
     midiActivityForUi.store (0.0f, std::memory_order_relaxed);
@@ -272,6 +284,7 @@ void HomeChordsAudioProcessor::releaseResources()
     // one case this can't fully cover; hosts generally send their own
     // all-notes-off in that situation.
     keyboardEngine.reset();
+    noteLedger.reset();
     sequencePlayer.reset();
     previewSynth.reset();
 }
@@ -318,10 +331,10 @@ void HomeChordsAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
 
     const int tonicPitchClass = getKeyTonicPitchClass();
     const auto scaleType = getScaleType();
-    const int octaveOffset = static_cast<int> (apvts.getRawParameterValue ("OCTAVE")->load());
-    const int velocity = static_cast<int> (apvts.getRawParameterValue ("VELOCITY")->load());
-    const float previewGainDb = apvts.getRawParameterValue ("PREVIEW_GAIN")->load();
-    const bool autoInversion = apvts.getRawParameterValue ("AUTO_INVERSION")->load() >= 0.5f;
+    const int octaveOffset = static_cast<int> (octaveParam->load());
+    const int velocity = static_cast<int> (velocityParam->load());
+    const float previewGainDb = previewGainParam->load();
+    const bool autoInversion = autoInversionParam->load() >= 0.5f;
 
     // Recomputed fresh every block from the current Key/Scale parameters
     // rather than cached -- this is cheap (a handful of fixed-size array
@@ -343,8 +356,8 @@ void HomeChordsAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     // Sequencer: sync its tempo/loop settings from the parameters, apply
     // any pending stop-release or seek request, then let it advance and
     // trigger this block's timeline events (if playing).
-    sequencePlayer.setTempoBpm (apvts.getRawParameterValue ("TEMPO")->load());
-    sequencePlayer.setLooping (apvts.getRawParameterValue ("LOOP_ENABLED")->load() >= 0.5f);
+    sequencePlayer.setTempoBpm (tempoParam->load());
+    sequencePlayer.setLooping (loopEnabledParam->load() >= 0.5f);
 
     if (sequencerReleaseRequested.exchange (false, std::memory_order_relaxed))
         sequencePlayer.releaseAllNotes (midi, noteLedger, 1);
@@ -384,9 +397,15 @@ void HomeChordsAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
 
-    // Phase 2 groundwork, now actually used: the real progression, plus
-    // the loop range (session/editing state, not something that needs
-    // host automation, so it isn't an APVTS parameter).
+    // The real progression, plus the loop range (session/editing state, not
+    // something that needs host automation, so it isn't an APVTS
+    // parameter). A state restored by setStateInformation leaves its
+    // PROGRESSION child inside apvts.state, so drop any such stale copy
+    // first -- otherwise every save appends another, and the *first* (oldest)
+    // one wins on the next load.
+    for (auto stale = state.getChildWithName ("PROGRESSION"); stale.isValid(); stale = state.getChildWithName ("PROGRESSION"))
+        state.removeChild (stale, nullptr);
+
     state.appendChild (progression.toValueTree(), nullptr);
     state.setProperty ("loopStartBeats", sequencePlayer.getLoopStartBeats(), nullptr);
     state.setProperty ("loopEndBeats", sequencePlayer.getLoopEndBeats(), nullptr);
@@ -404,6 +423,9 @@ void HomeChordsAudioProcessor::setStateInformation (const void* data, int sizeIn
             const auto state = juce::ValueTree::fromXml (*xml);
             apvts.replaceState (state);
             progression = progression::ProgressionModel::fromValueTree (state.getChildWithName ("PROGRESSION"));
+
+            // Undo history refers to the progression that was just replaced.
+            undoManager.clearUndoHistory();
 
             const double loopStart = static_cast<double> (state.getProperty ("loopStartBeats", 0.0));
             const double loopEnd = static_cast<double> (state.getProperty ("loopEndBeats", 16.0));
