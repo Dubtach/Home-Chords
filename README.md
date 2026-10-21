@@ -46,9 +46,12 @@ source/
     Voicing.h               Shared note-placement/voice-leading math,
                           used by both live play and the sequencer.
     Presets.h               The 5 named scale-aware progression presets.
+    ColorChords.h/.cpp      Borrowed/colour chord sets by key mode.
+    Suggestions.h/.cpp      Functional-harmony "what next" suggestions.
   Midi/
     ChordKeyboardEngine.h   Live play: keyboard/mouse/MIDI -> real,
                           stuck-note-safe MIDI, with Auto Inversion.
+    MidiExport.h/.cpp       Offline render of the timeline to a .mid file.
     NoteLedger.h            Shared per-note reference counting, so live
                           play and the sequencer can't step on each
                           other's notes.
@@ -65,6 +68,8 @@ source/
                           card/well painters, controls, ChordCard).
     ChordEditPanel.h         Right-click quality/extension override popup.
     SettingsPanel.h          Keyboard-mode / note-spelling popup.
+    ColorChordPanel.h        Borrowed-chord picker popup.
+    MidiDragTile.h           "DRAG MIDI" tile for dragging out a .mid.
 tests/                    Catch2 unit tests.
 ```
 
@@ -83,11 +88,23 @@ tests/                    Catch2 unit tests.
 - **Add Mode** — pressing a keyboard/MIDI key (not a mouse click) appends
   that chord to the end of the timeline instead of just sounding it live.
 - **Timeline** — drag a block to move it, its right edge to resize it,
-  click to select it (shows a toolbar for Rhythm/Bass/Arp/Delete/
-  Duplicate). Drag the small markers above the ruler to set the loop
+  click to select it (shows the selected-block toolbar). Drag the small markers above the ruler to set the loop
   range.
 - **Play / Stop / Restart / Loop** — the timeline's own transport, on its
-  own internal clock (Tempo knob), independent of host playback.
+  own internal clock (Tempo knob).
+- **Host sync** — follow the host's transport and position instead; the
+  internal transport controls are disabled while it is on.
+- **Snap / Voicing** — timeline grid (1/16 … Bar) and voicing style
+  (Close/Open/Wide/Piano).
+- **Colour** — pick a borrowed chord (bIII, iv, bVI, V/V …) to append.
+- **Export / DRAG MIDI** — save the timeline as a .mid, or drag it into
+  a DAW track.
+- **Hints** — dashed outlines mark likely next chords; "NEXT" is the top
+  pick, hover for the reason.
+- **Selected block toolbar** — Quality, Extension, Rhythm, Bass, Arp mode/
+  rate, Gate, Delete, Duplicate.
+- **Humanize Time / Velocity** — footer knobs, applied to playback and
+  exports.
 - **Presets** — apply one of 5 scale-aware progression templates.
 - **Undo / Redo** — for every timeline edit.
 - **Auto Inversion** — on by default; smooths voice movement between

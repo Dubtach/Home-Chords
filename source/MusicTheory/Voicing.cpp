@@ -65,6 +65,53 @@ namespace musictheory
         return count;
     }
 
+    int applyVoicingStyle (const std::array<int, maxChordTones>& closeNotes, int count, int rootMidiNote,
+                           VoicingStyle style, std::array<int, maxVoicedNotes>& outNotes) noexcept
+    {
+        std::array<int, maxVoicedNotes> work {};
+        int n = std::min (std::max (count, 0), maxChordTones);
+
+        for (int i = 0; i < n; ++i)
+            work[static_cast<size_t> (i)] = closeNotes[static_cast<size_t> (i)];
+
+        const auto addNote = [&] (int note)
+        {
+            if (n < maxVoicedNotes)
+                work[static_cast<size_t> (n++)] = note;
+        };
+
+        const bool dropSecondHighest = (style == VoicingStyle::Open || style == VoicingStyle::Wide) && n >= 3;
+
+        if (dropSecondHighest)
+            work[static_cast<size_t> (n - 2)] -= 12;
+
+        if (style == VoicingStyle::Wide && n >= 1)
+        {
+            // Double the lowest tone an octave down (after the drop, so the
+            // double sits below the whole voicing).
+            const int lowest = *std::min_element (work.begin(), work.begin() + n);
+            addNote (lowest - 12);
+        }
+
+        if (style == VoicingStyle::Piano && n >= 1)
+            addNote (rootMidiNote - 12);
+
+        std::sort (work.begin(), work.begin() + n);
+
+        int out = 0;
+        for (int i = 0; i < n; ++i)
+        {
+            const int note = std::clamp (work[static_cast<size_t> (i)], 0, 127);
+
+            if (out > 0 && outNotes[static_cast<size_t> (out - 1)] == note)
+                continue;   // clamping or doubling can land two voices on one note
+
+            outNotes[static_cast<size_t> (out++)] = note;
+        }
+
+        return out;
+    }
+
     int compensateVelocityForToneCount (int velocity, int toneCount) noexcept
     {
         constexpr float referenceToneCount = 3.0f;

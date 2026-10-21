@@ -5,6 +5,8 @@
 #include "Shared/HomeSeriesUI.h"
 #include "Shared/ChordEditPanel.h"
 #include "Shared/SettingsPanel.h"
+#include "Shared/ColorChordPanel.h"
+#include "Shared/MidiDragTile.h"
 #include "Timeline/TimelineComponent.h"
 
 // =============================================================================
@@ -25,6 +27,11 @@
 // Right-clicking a chord card opens a quality/extension override popup
 // for that slot. In ADD mode, pressing a keyboard/MIDI key also appends
 // that slot's current chord to the timeline (mouse clicks never do).
+//
+// Also here: next-chord hints (dashed outlines on the chord row), the
+// borrowed/colour chord popup, voicing / humanize / snap / host-sync
+// controls, MIDI export and a drag-out tile, and a toolbar that edits the
+// selected timeline chord's quality, extension, rhythm, bass and arp.
 // =============================================================================
 
 class HomeChordsAudioProcessorEditor : public juce::AudioProcessorEditor,
@@ -32,10 +39,10 @@ class HomeChordsAudioProcessorEditor : public juce::AudioProcessorEditor,
                                         private juce::AudioProcessorValueTreeState::Listener
 {
 public:
-    static constexpr int defaultWidth = 920;
-    static constexpr int defaultHeight = 700;
-    static constexpr int minWidth = 760;
-    static constexpr int minHeight = 560;
+    static constexpr int defaultWidth = 1000;
+    static constexpr int defaultHeight = 780;
+    static constexpr int minWidth = 880;
+    static constexpr int minHeight = 620;
 
     explicit HomeChordsAudioProcessorEditor (HomeChordsAudioProcessor&);
     ~HomeChordsAudioProcessorEditor() override;
@@ -53,26 +60,33 @@ private:
     std::array<homeUI::ChordCard, musictheory::maxDiatonicSlots> chordCards;
     int currentSlotCount = 7;
 
-    juce::ComboBox keyBox, scaleBox, timeSigBox, presetBox;
+    juce::ComboBox keyBox, scaleBox, timeSigBox, presetBox, snapBox, voicingBox;
     homeUI::Checkbox autoInversionCheckbox { homeUI::green };
     homeUI::Checkbox addModeCheckbox { homeUI::pink };
     homeUI::Checkbox loopCheckbox { homeUI::cyan };
+    homeUI::Checkbox syncCheckbox { homeUI::purple };
+    homeUI::Checkbox hintsCheckbox { homeUI::green };
     homeUI::ChevronButton octaveDownButton { homeUI::ChevronButton::left, homeUI::cyan };
     homeUI::ChevronButton octaveUpButton   { homeUI::ChevronButton::right, homeUI::cyan };
     homeUI::Knob velocityKnob { "VELOCITY", homeUI::green };
     homeUI::Knob previewKnob  { "PREVIEW", homeUI::cyan };
     homeUI::Knob tempoKnob    { "TEMPO", homeUI::pink };
+    homeUI::Knob humanizeTimeKnob { "HUMANIZE", homeUI::purple };
+    homeUI::Knob humanizeVelKnob  { "VEL VAR", homeUI::purple };
 
     juce::TextButton settingsButton { "..." };
     juce::TextButton playStopButton { "Play" };
     juce::TextButton restartButton { "Restart" };
     juce::TextButton undoButton { "Undo" };
     juce::TextButton redoButton { "Redo" };
+    juce::TextButton colorButton { "Colour" };
+    juce::TextButton exportButton { "Export MIDI" };
+    homeUI::MidiDragTile dragTile;
 
     timeline::TimelineComponent timelineComponent;
 
     // Selected-event toolbar -- only visible while a timeline block is selected.
-    juce::ComboBox rhythmBox, bassBox, arpModeBox, arpRateBox;
+    juce::ComboBox qualityBox, extensionBox, rhythmBox, bassBox, arpModeBox, arpRateBox, gateBox;
     juce::TextButton deleteEventButton { "Delete" };
     juce::TextButton duplicateEventButton { "Duplicate" };
     bool somethingSelected = false;
@@ -84,7 +98,19 @@ private:
 
     std::unique_ptr<ComboBoxAttachment> keyAttachment, scaleAttachment, timeSigAttachment;
     std::unique_ptr<SliderAttachment> velocityAttachment, previewGainAttachment, tempoAttachment;
-    std::unique_ptr<ButtonAttachment> autoInversionAttachment, addModeAttachment, loopAttachment;
+    std::unique_ptr<ButtonAttachment> autoInversionAttachment, addModeAttachment, loopAttachment, syncAttachment, hintsAttachment;
+    std::unique_ptr<ComboBoxAttachment> snapAttachment, voicingAttachment;
+    std::unique_ptr<SliderAttachment> humanizeTimeAttachment, humanizeVelAttachment;
+
+    std::unique_ptr<juce::FileChooser> fileChooser;   // kept alive while its async dialog is open
+    juce::TooltipWindow tooltipWindow { this, 500 };
+
+    // Next-chord hint bookkeeping (message thread).
+    int lastPlayedSlot = -1;
+    juce::uint32 previousActiveMask = 0;
+    juce::uint32 lastSeenRevision = 0;
+    bool lastHintSourceWasLive = false;
+    int hintSignature = -1;
 
     juce::Rectangle<float> brandBounds, lampBounds, footerCardBounds, octaveLabelBounds, octaveValueWellBounds;
 
@@ -97,6 +123,12 @@ private:
     void parameterChanged (const juce::String& parameterID, float newValue) override;
     void refreshChordCards();
     void nudgeOctave (int delta);
+    void setSelectionControlsVisible (bool visible);
+    void showColorChords();
+    void exportMidiWithDialog();
+    juce::File writeDragFile();
+    void updateHints (juce::uint32 triggeredSlots, juce::uint32 activeSlots);
+    double snapBeatsFromParam() const;
     void releaseAllHeldSlots();        // computer-keyboard slots only (e.g. on focus loss)
     void releaseAllMouseSlots();       // mouse-held slots (e.g. editor hidden/closed mid-click)
     void showChordEditor (int slot);

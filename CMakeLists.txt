@@ -56,10 +56,16 @@ target_sources("${PROJECT_NAME}" PRIVATE
     source/MusicTheory/Voicing.cpp
     source/MusicTheory/Presets.h
     source/MusicTheory/Presets.cpp
+    source/MusicTheory/ColorChords.h
+    source/MusicTheory/ColorChords.cpp
+    source/MusicTheory/Suggestions.h
+    source/MusicTheory/Suggestions.cpp
 
     source/Midi/NoteLedger.h
     source/Midi/ChordKeyboardEngine.h
     source/Midi/ChordKeyboardEngine.cpp
+    source/Midi/MidiExport.h
+    source/Midi/MidiExport.cpp
 
     source/Preview/PreviewSynth.h
     source/Preview/PreviewSynth.cpp
@@ -78,6 +84,8 @@ target_sources("${PROJECT_NAME}" PRIVATE
     source/Shared/HomeSeriesUI.h
     source/Shared/ChordEditPanel.h
     source/Shared/SettingsPanel.h
+    source/Shared/ColorChordPanel.h
+    source/Shared/MidiDragTile.h
 )
 
 target_include_directories("${PROJECT_NAME}" PRIVATE source)

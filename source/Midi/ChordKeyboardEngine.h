@@ -89,7 +89,8 @@ namespace midiengine
         // live or sequenced -- see MusicTheory/Voicing.h).
         void renderBlockStart (juce::MidiBuffer& midiOut, NoteLedger& ledger,
                                 const musictheory::DiatonicShapeSet& currentShapes,
-                                int rootOctaveOffset, int velocity, int midiChannel, bool autoInversion) noexcept;
+                                int rootOctaveOffset, int velocity, int midiChannel, bool autoInversion,
+                                musictheory::VoicingStyle style = musictheory::VoicingStyle::Close) noexcept;
 
         // Releases everything this engine is holding (not other emitters'
         // notes -- see NoteLedger), and forgets all held-key state.
@@ -107,7 +108,7 @@ namespace midiengine
     private:
         struct SlotVoices
         {
-            std::array<int, musictheory::maxChordTones> notes { -1, -1, -1, -1 };
+            std::array<int, musictheory::maxVoicedNotes> notes { -1, -1, -1, -1, -1, -1 };
             int count = 0;
         };
 
@@ -132,7 +133,8 @@ namespace midiengine
 
         void noteOnSlot (juce::MidiBuffer& midiOut, NoteLedger& ledger, int slot,
                           const musictheory::RtChordShape& rootPositionShape, int anchorPitchClass,
-                          int rootOctaveOffset, int velocity, int midiChannel, bool autoInversion) noexcept;
+                          int rootOctaveOffset, int velocity, int midiChannel, bool autoInversion,
+                          musictheory::VoicingStyle style) noexcept;
         void noteOffSlot (juce::MidiBuffer& midiOut, NoteLedger& ledger, int slot, int midiChannel) noexcept;
         float lastPlayedCentroid() const noexcept;
 

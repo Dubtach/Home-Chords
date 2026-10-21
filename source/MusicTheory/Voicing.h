@@ -34,6 +34,14 @@ namespace musictheory
     int voiceShape (const RtChordShape& rootPositionShape, int rootMidiNote, int inversion,
                     std::array<int, maxChordTones>& outNotes) noexcept;
 
+    // Re-spreads an already-voiced (close, ascending) chord according to
+    // `style`. `closeNotes` holds `count` ascending MIDI notes; the result is
+    // written ascending, de-duplicated and clamped to 0-127 into outNotes and
+    // its length returned (at most maxVoicedNotes). Close returns the input
+    // unchanged. `rootMidiNote` is the chord root's MIDI note (used by Piano).
+    int applyVoicingStyle (const std::array<int, maxChordTones>& closeNotes, int count, int rootMidiNote,
+                           VoicingStyle style, std::array<int, maxVoicedNotes>& outNotes) noexcept;
+
     // Scales velocity by roughly sqrt(3 / toneCount) so a 4-note chord
     // doesn't ring louder than a 3-note one (power of independent notes
     // sums, not amplitude). 3 notes = unchanged. Result is clamped 1-127.

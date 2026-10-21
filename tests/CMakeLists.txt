@@ -49,6 +49,8 @@ add_executable(Tests
     ProgressionModelTests.cpp
     ProgressionActionsTests.cpp
     SequencePlayerTests.cpp
+    MidiExportTests.cpp
+    ColorAndSuggestionTests.cpp
 )
 
 target_include_directories(Tests PRIVATE ${CMAKE_SOURCE_DIR}/source)
@@ -62,9 +64,12 @@ target_sources(Tests PRIVATE
     ${CMAKE_SOURCE_DIR}/source/MusicTheory/MusicTheoryEngine.cpp
     ${CMAKE_SOURCE_DIR}/source/MusicTheory/Voicing.cpp
     ${CMAKE_SOURCE_DIR}/source/MusicTheory/Presets.cpp
+    ${CMAKE_SOURCE_DIR}/source/MusicTheory/ColorChords.cpp
+    ${CMAKE_SOURCE_DIR}/source/MusicTheory/Suggestions.cpp
     ${CMAKE_SOURCE_DIR}/source/Progression/ChordEvent.cpp
     ${CMAKE_SOURCE_DIR}/source/Progression/ProgressionModel.cpp
     ${CMAKE_SOURCE_DIR}/source/Midi/ChordKeyboardEngine.cpp
+    ${CMAKE_SOURCE_DIR}/source/Midi/MidiExport.cpp
     ${CMAKE_SOURCE_DIR}/source/Timeline/SequencePlayer.cpp
 )
 

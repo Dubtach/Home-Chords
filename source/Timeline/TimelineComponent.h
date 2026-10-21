@@ -21,8 +21,8 @@
 // fine for the progression lengths a songwriting sketch tool actually
 // produces; long progressions just render with narrower blocks.
 //
-// Snap is fixed at a quarter-beat grid for this pass (spec section 10's
-// configurable snap-grid picker isn't implemented).
+// Snap is configurable (setSnapBeats; the editor's Snap box drives it), and
+// chord labels follow the plugin's sharp/flat preference (setUseFlats).
 // =============================================================================
 
 namespace timeline
@@ -50,10 +50,18 @@ namespace timeline
         void duplicateSelected();
         void updateSelected (const progression::ChordEvent& newState);   // for the toolbar to push Rhythm/Bass/Arp edits through
 
+        // Grid that drags snap to, in beats (clamped to a sane minimum).
+        void setSnapBeats (double beats) noexcept { snapBeats = juce::jmax (0.0625, beats); }
+        double getSnapBeats() const noexcept { return snapBeats; }
+
+        // Whether chord names spell black-key roots with flats (Bb) or sharps (A#).
+        void setUseFlats (bool shouldUseFlats);
+
         void refreshFromModel();   // call after any external model change (undo/redo, preset applied, ADD-mode append)
 
     private:
-        static constexpr double snapBeats = 0.25;
+        double snapBeats = 0.25;
+        bool useFlats = false;
         static constexpr float rulerHeight = 22.0f;
         static constexpr float loopMarkerHeight = 10.0f;
 

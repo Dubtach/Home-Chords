@@ -48,6 +48,10 @@ HomeChordsAudioProcessor::HomeChordsAudioProcessor()
     autoInversionParam = apvts.getRawParameterValue ("AUTO_INVERSION");
     tempoParam         = apvts.getRawParameterValue ("TEMPO");
     loopEnabledParam   = apvts.getRawParameterValue ("LOOP_ENABLED");
+    voicingParam       = apvts.getRawParameterValue ("VOICING");
+    humanizeTimeParam  = apvts.getRawParameterValue ("HUMANIZE_TIME");
+    humanizeVelParam   = apvts.getRawParameterValue ("HUMANIZE_VEL");
+    syncHostParam      = apvts.getRawParameterValue ("SYNC_HOST");
 
     sequencePlayer.setLoopRange (0.0, 16.0);
 }
@@ -107,6 +111,32 @@ juce::AudioProcessorValueTreeState::ParameterLayout HomeChordsAudioProcessor::cr
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         "LOOP_ENABLED", "Loop", true, BoolAttributes{}));
 
+    // Follow the host's transport (start/stop, position, tempo) instead of
+    // the plugin's own Play button and Tempo knob.
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        "SYNC_HOST", "Sync to Host", false, BoolAttributes{}));
+
+    // Index maps 1:1 to musictheory::VoicingStyle.
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        "VOICING", "Voicing", juce::StringArray { "Close", "Open", "Wide", "Piano" }, 0, ChoiceAttributes{}));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        "HUMANIZE_TIME", "Humanize Timing", juce::NormalisableRange<float> (0.0f, 30.0f, 0.1f), 0.0f,
+        FloatAttributes{}.withLabel ("ms")));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        "HUMANIZE_VEL", "Humanize Velocity", juce::NormalisableRange<float> (0.0f, 30.0f, 0.1f), 0.0f,
+        FloatAttributes{}.withLabel ("%")));
+
+    // Timeline snap grid, in the order the editor's snap box lists them:
+    // 1/16, 1/8, 1/4, 1/2 note, one bar.
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        "SNAP", "Snap", juce::StringArray { "1/16", "1/8", "1/4", "1/2", "Bar" }, 0, ChoiceAttributes{}));
+
+    // Show "what could come next" hints on the chord row.
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        "HINTS", "Next-Chord Hints", true, BoolAttributes{}));
+
     // Index 0 = "Diatonic" (no override); indices 1-6 map to
     // ChordQuality::Major..Sus4 (see getSlotQualityOverride/
     // setSlotQualityOverride for the -1 offset that encodes this).
@@ -146,6 +176,46 @@ double HomeChordsAudioProcessor::getBeatsPerBar() const noexcept
         case 2:  return 3.0;   // 6/8, treated as 2 dotted-quarter beats -> 3 quarter-note-equivalent beats
         default: return 4.0;   // 4/4
     }
+}
+
+musictheory::VoicingStyle HomeChordsAudioProcessor::getVoicingStyle() const noexcept
+{
+    return static_cast<musictheory::VoicingStyle> (
+        juce::jlimit (0, musictheory::numVoicingStyles - 1, static_cast<int> (voicingParam->load())));
+}
+
+bool HomeChordsAudioProcessor::shouldSpellWithFlats() const noexcept
+{
+    const auto spelling = static_cast<musictheory::NoteSpelling> (
+        juce::jlimit (0, 2, static_cast<int> (apvts.getRawParameterValue ("NOTE_SPELLING")->load())));
+
+    switch (spelling)
+    {
+        case musictheory::NoteSpelling::Sharps: return false;
+        case musictheory::NoteSpelling::Flats:  return true;
+        default:                                return musictheory::prefersFlats (getKeyTonicPitchClass(), getScaleType());
+    }
+}
+
+std::vector<musictheory::ColorChord> HomeChordsAudioProcessor::getCurrentColorChords() const
+{
+    const auto spelling = static_cast<musictheory::NoteSpelling> (
+        juce::jlimit (0, 2, static_cast<int> (apvts.getRawParameterValue ("NOTE_SPELLING")->load())));
+
+    return musictheory::buildColorChords (getKeyTonicPitchClass(), getScaleType(), spelling);
+}
+
+midiexport::ExportSettings HomeChordsAudioProcessor::getExportSettings() const
+{
+    midiexport::ExportSettings settings;
+    settings.bpm = static_cast<double> (tempoParam->load());
+    settings.beatsPerBar = static_cast<int> (getBeatsPerBar());
+    settings.rootOctaveOffset = static_cast<int> (octaveParam->load());
+    settings.voicing = getVoicingStyle();
+    settings.autoInversion = autoInversionParam->load() >= 0.5f;
+    settings.humanizeTimingMs = humanizeTimeParam->load();
+    settings.humanizeVelocity = humanizeVelParam->load() * 0.01f;
+    return settings;
 }
 
 std::vector<musictheory::ChordDefinition> HomeChordsAudioProcessor::getCurrentDiatonicChords() const
@@ -242,12 +312,27 @@ void HomeChordsAudioProcessor::addChordFromSlotToTimeline (int slot)
     event.rootPitchClass = chord.rootPitchClass;
     event.quality = chord.quality;
     event.extension = getSlotExtensionOverride (slot);
-    event.velocity = static_cast<int> (apvts.getRawParameterValue ("VELOCITY")->load());
+    event.velocity = static_cast<int> (velocityParam->load());
     event.startBeats = progression.getTotalLengthBeats();
     event.lengthBeats = getBeatsPerBar();
 
     // One undo step per chord added (ADD mode can append several in a row).
     undoManager.beginNewTransaction ("Add chord");
+    undoManager.perform (new progression::AddChordAction (progression, event));
+}
+
+void HomeChordsAudioProcessor::addColorChordToTimeline (const musictheory::ColorChord& chord)
+{
+    progression::ChordEvent event;
+    event.scaleDegree = -1;   // not a diatonic degree; next-chord hints skip it
+    event.rootPitchClass = chord.rootPitchClass;
+    event.quality = chord.quality;
+    event.extension = chord.extension;
+    event.velocity = static_cast<int> (velocityParam->load());
+    event.startBeats = progression.getTotalLengthBeats();
+    event.lengthBeats = getBeatsPerBar();
+
+    undoManager.beginNewTransaction ("Add colour chord");
     undoManager.perform (new progression::AddChordAction (progression, event));
 }
 
@@ -351,13 +436,56 @@ void HomeChordsAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     for (int slot = 0; slot < diatonicShapes.count; ++slot)
         finalShapes.shapes[static_cast<size_t> (slot)] = effectiveShape (slot, diatonicShapes.shapes[static_cast<size_t> (slot)]);
 
-    keyboardEngine.renderBlockStart (midi, noteLedger, finalShapes, octaveOffset, velocity, 1, autoInversion);
+    keyboardEngine.renderBlockStart (midi, noteLedger, finalShapes, octaveOffset, velocity, 1, autoInversion, getVoicingStyle());
 
     // Sequencer: sync its tempo/loop settings from the parameters, apply
     // any pending stop-release or seek request, then let it advance and
     // trigger this block's timeline events (if playing).
-    sequencePlayer.setTempoBpm (tempoParam->load());
-    sequencePlayer.setLooping (loopEnabledParam->load() >= 0.5f);
+    sequencePlayer.setHumanize (humanizeTimeParam->load(), humanizeVelParam->load() * 0.01f);
+    sequencePlayer.setVoicingStyle (getVoicingStyle());
+    sequencePlayer.setAutoInversion (autoInversion);
+
+    const bool hostSync = syncHostParam->load() >= 0.5f;
+
+    if (hostSync)
+    {
+        // The host owns the clock, tempo and looping in this mode.
+        timeline::SequencePlayer::HostTransport transport;
+
+        if (auto* playHead = getPlayHead())
+        {
+            if (const auto position = playHead->getPosition())
+            {
+                if (const auto ppq = position->getPpqPosition())
+                {
+                    transport.valid = true;
+                    transport.playing = position->getIsPlaying();
+                    transport.ppq = *ppq;
+
+                    if (const auto bpm = position->getBpm())
+                        transport.bpm = *bpm;
+                }
+            }
+        }
+
+        sequencePlayer.setLooping (false);
+        sequencePlayer.syncToHost (transport, midi, noteLedger, 1);
+    }
+    else
+    {
+        // Switching sync off while the host is rolling must not leave the
+        // sequencer running on its own: hand control back stopped.
+        if (wasHostSyncing)
+        {
+            sequencePlayer.setPlaying (false);
+            sequencerReleaseRequested.store (true, std::memory_order_relaxed);
+        }
+
+        sequencePlayer.setTempoBpm (tempoParam->load());
+        sequencePlayer.setLooping (loopEnabledParam->load() >= 0.5f);
+    }
+
+    wasHostSyncing = hostSync;
 
     if (sequencerReleaseRequested.exchange (false, std::memory_order_relaxed))
         sequencePlayer.releaseAllNotes (midi, noteLedger, 1);

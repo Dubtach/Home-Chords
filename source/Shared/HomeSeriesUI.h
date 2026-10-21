@@ -411,7 +411,8 @@ namespace homeUI
     // chord through the same onPressStart/onPressEnd path a keyboard key
     // uses, via the processor's real-time-safe slot-hold API.
     // =========================================================================
-    class ChordCard : public juce::Component
+    class ChordCard : public juce::Component,
+                      public juce::SettableTooltipClient
     {
     public:
         ChordCard() = default;
@@ -461,6 +462,22 @@ namespace homeUI
             }
         }
 
+        // "What could come next" hint: rank 1 (strongest) to 3, or 0 for none.
+        // Drawn as a dashed outline (plus a NEXT tag on the best one) and
+        // explained in the card's tooltip.
+        void setSuggestion (int rank, const juce::String& reason)
+        {
+            rank = juce::jlimit (0, 3, rank);
+
+            if (suggestionRank != rank)
+            {
+                suggestionRank = rank;
+                repaint();
+            }
+
+            setTooltip (rank > 0 ? "Next? " + reason : juce::String());
+        }
+
         // onPressStart/onPressEnd: left click/release, auditions the chord.
         // onEditRequested: right click (or ctrl-click on macOS), opens the
         // quality/extension editor -- doesn't also fire onPressStart, so a
@@ -484,6 +501,29 @@ namespace homeUI
             {
                 g.setColour (juce::Colours::white.withAlpha (lit * 0.55f));
                 g.drawRoundedRectangle (lifted, 6.0f, 1.6f + lit * 1.2f);
+            }
+
+            if (suggestionRank > 0)
+            {
+                const float strength = suggestionRank == 1 ? 0.95f : (suggestionRank == 2 ? 0.60f : 0.38f);
+
+                juce::Path outline;
+                outline.addRoundedRectangle (lifted.expanded (1.0f), 7.0f);
+
+                juce::Path dashed;
+                const float dashes[] = { 5.0f, 4.0f };
+                juce::PathStrokeType (1.6f).createDashedStroke (dashed, outline, dashes, 2);
+
+                g.setColour (juce::Colours::white.withAlpha (strength));
+                g.fillPath (dashed);
+
+                if (suggestionRank == 1)
+                {
+                    const auto tag = juce::Rectangle<float> (lifted.getRight() - 40.0f, lifted.getBottom() - 15.0f, 34.0f, 11.0f);
+                    g.setColour (juce::Colours::black.withAlpha (0.38f));
+                    g.fillRoundedRectangle (tag, 3.0f);
+                    drawCardText (g, "NEXT", tag, 8.0f);
+                }
             }
 
             auto content = lifted.reduced (6.0f);
@@ -537,6 +577,7 @@ namespace homeUI
         juce::Colour accent = cyan;
         float lit = 0.0f;
         bool hasOverrideFlag = false;
+        int suggestionRank = 0;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChordCard)
     };

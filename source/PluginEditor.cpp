@@ -60,6 +60,18 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
         chordCards[static_cast<size_t> (i)].onEditRequested = [this, i] { showChordEditor (i); };
     }
 
+    snapBox.addItemList ({ "1/16", "1/8", "1/4", "1/2", "Bar" }, 1);
+    voicingBox.addItemList ({ "Close", "Open", "Wide", "Piano" }, 1);
+    qualityBox.addItemList ({ "Major", "Minor", "Dim", "Aug", "Sus2", "Sus4" }, 1);
+    extensionBox.addItemList ({ "No ext", "6", "7", "Maj7", "Add9" }, 1);
+    gateBox.addItemList ({ "Gate 25%", "Gate 50%", "Gate 80%", "Legato" }, 1);
+    qualityBox.setTextWhenNothingSelected ("Quality");
+    snapBox.setTooltip ("Timeline snap grid");
+    voicingBox.setTooltip ("How chords are spread: Close, Open (drop-2), Wide (open + low root), Piano (low root + close chord)");
+    qualityBox.setTooltip ("Quality of the selected chord");
+    extensionBox.setTooltip ("Extension of the selected chord");
+    gateBox.setTooltip ("Arpeggio gate: how much of each step the note is held");
+
     keyBox.addItemList (musictheory::getAllKeyNames(), 1);
     scaleBox.addItemList (musictheory::getAllScaleNames(), 1);
     timeSigBox.addItemList ({ "4/4", "3/4", "6/8" }, 1);
@@ -72,7 +84,8 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
     arpModeBox.addItemList ({ "Off", "Up", "Down", "Up/Down", "Random" }, 1);
     arpRateBox.addItemList ({ "1/4", "1/8", "1/16", "1/32" }, 1);
 
-    for (auto* box : { &keyBox, &scaleBox, &timeSigBox, &presetBox, &rhythmBox, &bassBox, &arpModeBox, &arpRateBox })
+    for (auto* box : { &keyBox, &scaleBox, &timeSigBox, &presetBox, &snapBox, &voicingBox,
+                       &qualityBox, &extensionBox, &rhythmBox, &bassBox, &arpModeBox, &arpRateBox, &gateBox })
     {
         styleComboBox (*box);
         addAndMakeVisible (*box);
@@ -86,25 +99,43 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
     autoInversionCheckbox.setButtonText ("AUTO INVERSION");
     addModeCheckbox.setButtonText ("ADD MODE");
     loopCheckbox.setButtonText ("LOOP");
+    syncCheckbox.setButtonText ("HOST SYNC");
+    hintsCheckbox.setButtonText ("HINTS");
+    syncCheckbox.setTooltip ("Follow the host: play/stop, position and tempo come from your DAW");
+    hintsCheckbox.setTooltip ("Outline the chords that commonly follow the last one");
     addAndMakeVisible (autoInversionCheckbox);
     addAndMakeVisible (addModeCheckbox);
     addAndMakeVisible (loopCheckbox);
+    addAndMakeVisible (syncCheckbox);
+    addAndMakeVisible (hintsCheckbox);
 
     addAndMakeVisible (velocityKnob);
     addAndMakeVisible (previewKnob);
     addAndMakeVisible (tempoKnob);
+    addAndMakeVisible (humanizeTimeKnob);
+    addAndMakeVisible (humanizeVelKnob);
+    humanizeTimeKnob.valueText = [] (double v) { return juce::String (v, 1) + " ms"; };
+    humanizeVelKnob.valueText  = [] (double v) { return juce::String (v, 1) + " %"; };
     velocityKnob.valueText = [] (double v) { return juce::String (static_cast<int> (v)); };
     previewKnob.valueText  = [] (double v) { return juce::String (v, 1) + " dB"; };
     tempoKnob.valueText    = [] (double v) { return juce::String (static_cast<int> (v)); };
 
     for (auto* button : { &settingsButton, &playStopButton, &restartButton, &undoButton, &redoButton,
-                          &deleteEventButton, &duplicateEventButton })
+                          &deleteEventButton, &duplicateEventButton, &colorButton, &exportButton })
     {
         styleTextButton (*button, homeUI::cyan);
         addAndMakeVisible (*button);
     }
 
     settingsButton.onClick = [this] { showSettingsPanel(); };
+
+    colorButton.setTooltip ("Borrowed and colour chords for this key");
+    exportButton.setTooltip ("Save the progression as a MIDI file");
+    colorButton.onClick = [this] { showColorChords(); };
+    exportButton.onClick = [this] { exportMidiWithDialog(); };
+
+    addAndMakeVisible (dragTile);
+    dragTile.provideFile = [this] { return writeDragFile(); };
 
     playStopButton.onClick = [this]
     {
@@ -138,11 +169,11 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
     addAndMakeVisible (timelineComponent);
     timelineComponent.onSelectionChanged = [this] (const juce::Uuid* id) { updateSelectedEventToolbar (id); };
 
-    for (auto* box : { &rhythmBox, &bassBox, &arpModeBox, &arpRateBox })
-        box->setVisible (false);
-    deleteEventButton.setVisible (false);
-    duplicateEventButton.setVisible (false);
+    setSelectionControlsVisible (false);
 
+    qualityBox.onChange = [this] { pushSelectedEventChange(); };
+    extensionBox.onChange = [this] { pushSelectedEventChange(); };
+    gateBox.onChange = [this] { pushSelectedEventChange(); };
     rhythmBox.onChange = [this] { pushSelectedEventChange(); };
     bassBox.onChange = [this] { pushSelectedEventChange(); };
     arpModeBox.onChange = [this] { pushSelectedEventChange(); };
@@ -160,12 +191,24 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
     autoInversionAttachment = std::make_unique<ButtonAttachment> (processor.apvts, "AUTO_INVERSION", autoInversionCheckbox);
     addModeAttachment       = std::make_unique<ButtonAttachment> (processor.apvts, "ADD_MODE", addModeCheckbox);
     loopAttachment          = std::make_unique<ButtonAttachment> (processor.apvts, "LOOP_ENABLED", loopCheckbox);
+    syncAttachment          = std::make_unique<ButtonAttachment> (processor.apvts, "SYNC_HOST", syncCheckbox);
+    hintsAttachment         = std::make_unique<ButtonAttachment> (processor.apvts, "HINTS", hintsCheckbox);
+    snapAttachment          = std::make_unique<ComboBoxAttachment> (processor.apvts, "SNAP", snapBox);
+    voicingAttachment       = std::make_unique<ComboBoxAttachment> (processor.apvts, "VOICING", voicingBox);
+    humanizeTimeAttachment  = std::make_unique<SliderAttachment> (processor.apvts, "HUMANIZE_TIME", humanizeTimeKnob);
+    humanizeVelAttachment   = std::make_unique<SliderAttachment> (processor.apvts, "HUMANIZE_VEL", humanizeVelKnob);
 
     processor.apvts.addParameterListener ("KEY", this);
     processor.apvts.addParameterListener ("SCALE", this);
     processor.apvts.addParameterListener ("NOTE_SPELLING", this);
 
     refreshChordCards();
+
+    // Clicking a control must not steal keyboard focus from the editor, or
+    // the chord keys go dead until the next click on the background.
+    for (auto* child : getChildren())
+        if (child != &timelineComponent)
+            child->setWantsKeyboardFocus (false);
 
     setResizable (true, true);
     setResizeLimits (minWidth, minHeight, 1800, 1100);
@@ -195,6 +238,8 @@ void HomeChordsAudioProcessorEditor::resized()
     auto chordRow = area.removeFromTop (130);
     area.removeFromTop (6);
     auto transportRow = area.removeFromTop (30);
+    area.removeFromTop (4);
+    auto toolsRow = area.removeFromTop (28);
     area.removeFromTop (4);
     auto toolbarRow = area.removeFromTop (28);
     area.removeFromTop (4);
@@ -229,40 +274,62 @@ void HomeChordsAudioProcessorEditor::resized()
         }
     }
 
-    // ---- transport row: play | restart | loop | tempo-ish | time sig | add mode | undo | redo | presets ----
-    playStopButton.setBounds (transportRow.removeFromLeft (56));
+    // ---- transport row: play | restart | loop | host sync | time sig | snap | add mode | hints ----
+    playStopButton.setBounds (transportRow.removeFromLeft (64));
     transportRow.removeFromLeft (4);
     restartButton.setBounds (transportRow.removeFromLeft (62));
     transportRow.removeFromLeft (10);
     loopCheckbox.setBounds (transportRow.removeFromLeft (64));
     transportRow.removeFromLeft (10);
+    syncCheckbox.setBounds (transportRow.removeFromLeft (100));
+    transportRow.removeFromLeft (10);
     timeSigBox.setBounds (transportRow.removeFromLeft (64));
+    transportRow.removeFromLeft (6);
+    snapBox.setBounds (transportRow.removeFromLeft (70));
     transportRow.removeFromLeft (10);
-    addModeCheckbox.setBounds (transportRow.removeFromLeft (90));
+    addModeCheckbox.setBounds (transportRow.removeFromLeft (96));
     transportRow.removeFromLeft (10);
-    presetBox.setBounds (transportRow.removeFromLeft (140));
-    transportRow.removeFromLeft (10);
-    redoButton.setBounds (transportRow.removeFromRight (56));
-    transportRow.removeFromRight (4);
-    undoButton.setBounds (transportRow.removeFromRight (56));
+    hintsCheckbox.setBounds (transportRow.removeFromLeft (80));
+
+    // ---- tools row: voicing | presets | colour ... export | drag | undo | redo ----
+    redoButton.setBounds (toolsRow.removeFromRight (56));
+    toolsRow.removeFromRight (4);
+    undoButton.setBounds (toolsRow.removeFromRight (56));
+    toolsRow.removeFromRight (14);
+    dragTile.setBounds (toolsRow.removeFromRight (104));
+    toolsRow.removeFromRight (6);
+    exportButton.setBounds (toolsRow.removeFromRight (96));
+
+    voicingBox.setBounds (toolsRow.removeFromLeft (92));
+    toolsRow.removeFromLeft (10);
+    presetBox.setBounds (toolsRow.removeFromLeft (150));
+    toolsRow.removeFromLeft (10);
+    colorButton.setBounds (toolsRow.removeFromLeft (72));
 
     // ---- selected-event toolbar ----
-    rhythmBox.setBounds (toolbarRow.removeFromLeft (110));
-    toolbarRow.removeFromLeft (6);
-    bassBox.setBounds (toolbarRow.removeFromLeft (90));
-    toolbarRow.removeFromLeft (6);
-    arpModeBox.setBounds (toolbarRow.removeFromLeft (90));
-    toolbarRow.removeFromLeft (6);
-    arpRateBox.setBounds (toolbarRow.removeFromLeft (70));
-    toolbarRow.removeFromLeft (10);
     duplicateEventButton.setBounds (toolbarRow.removeFromRight (84));
     toolbarRow.removeFromRight (6);
     deleteEventButton.setBounds (toolbarRow.removeFromRight (70));
+    toolbarRow.removeFromRight (10);
+
+    qualityBox.setBounds (toolbarRow.removeFromLeft (84));
+    toolbarRow.removeFromLeft (6);
+    extensionBox.setBounds (toolbarRow.removeFromLeft (72));
+    toolbarRow.removeFromLeft (12);
+    rhythmBox.setBounds (toolbarRow.removeFromLeft (104));
+    toolbarRow.removeFromLeft (6);
+    bassBox.setBounds (toolbarRow.removeFromLeft (84));
+    toolbarRow.removeFromLeft (6);
+    arpModeBox.setBounds (toolbarRow.removeFromLeft (84));
+    toolbarRow.removeFromLeft (6);
+    arpRateBox.setBounds (toolbarRow.removeFromLeft (64));
+    toolbarRow.removeFromLeft (6);
+    gateBox.setBounds (toolbarRow.removeFromLeft (92));
 
     // ---- timeline ----
     timelineComponent.setBounds (timelineArea);
 
-    // ---- footer: octave stepper | auto inversion | velocity | tempo | preview volume ----
+    // ---- footer: octave stepper | auto inversion | five knobs ----
     footerCardBounds = footer.toFloat();
     auto footerContent = footer.reduced (14, 10);
 
@@ -283,10 +350,12 @@ void HomeChordsAudioProcessorEditor::resized()
     footerContent.removeFromLeft (16);
 
     auto knobArea = footerContent;
-    const int knobWidth = knobArea.getWidth() / 3;
-    velocityKnob.setBounds (knobArea.removeFromLeft (knobWidth).reduced (10, 0));
-    tempoKnob.setBounds (knobArea.removeFromLeft (knobWidth).reduced (10, 0));
-    previewKnob.setBounds (knobArea.reduced (10, 0));
+    const int knobWidth = knobArea.getWidth() / 5;
+    velocityKnob.setBounds (knobArea.removeFromLeft (knobWidth).reduced (6, 0));
+    tempoKnob.setBounds (knobArea.removeFromLeft (knobWidth).reduced (6, 0));
+    previewKnob.setBounds (knobArea.removeFromLeft (knobWidth).reduced (6, 0));
+    humanizeTimeKnob.setBounds (knobArea.removeFromLeft (knobWidth).reduced (6, 0));
+    humanizeVelKnob.setBounds (knobArea.reduced (6, 0));
 }
 
 void HomeChordsAudioProcessorEditor::paint (juce::Graphics& g)
@@ -401,7 +470,25 @@ void HomeChordsAudioProcessorEditor::timerCallback()
 
     undoButton.setEnabled (processor.undoManager.canUndo());
     redoButton.setEnabled (processor.undoManager.canRedo());
-    playStopButton.setButtonText (processor.sequencePlayer.isPlaying() ? "Stop" : "Play");
+
+    // With host sync on, the host owns transport, position, tempo and looping.
+    const bool hostSync = processor.apvts.getRawParameterValue ("SYNC_HOST")->load() >= 0.5f;
+    playStopButton.setEnabled (! hostSync);
+    restartButton.setEnabled (! hostSync);
+    loopCheckbox.setEnabled (! hostSync);
+    tempoKnob.setEnabled (! hostSync);
+    playStopButton.setButtonText (hostSync ? "Host" : (processor.sequencePlayer.isPlaying() ? "Stop" : "Play"));
+
+    // Things the timeline needs from parameters (cheap; the setters only
+    // repaint on an actual change).
+    timelineComponent.setSnapBeats (snapBeatsFromParam());
+    timelineComponent.setUseFlats (processor.shouldSpellWithFlats());
+
+    const bool hasProgression = ! processor.progression.isEmpty();
+    exportButton.setEnabled (hasProgression);
+    dragTile.setActive (hasProgression);
+
+    updateHints (triggered, activeMask);
 
     repaint (lampBounds.getSmallestIntegerContainer());
     repaint (octaveValueWellBounds.getSmallestIntegerContainer());
@@ -539,10 +626,7 @@ void HomeChordsAudioProcessorEditor::updateSelectedEventToolbar (const juce::Uui
     somethingSelected = (id != nullptr);
     selectedEventId = (id != nullptr) ? *id : juce::Uuid::null();
 
-    for (auto* box : { &rhythmBox, &bassBox, &arpModeBox, &arpRateBox })
-        box->setVisible (somethingSelected);
-    deleteEventButton.setVisible (somethingSelected);
-    duplicateEventButton.setVisible (somethingSelected);
+    setSelectionControlsVisible (somethingSelected);
 
     if (! somethingSelected)
         return;
@@ -552,6 +636,31 @@ void HomeChordsAudioProcessorEditor::updateSelectedEventToolbar (const juce::Uui
         return;
 
     const auto& event = processor.progression.getEvent (index);
+
+    if (static_cast<int> (event.quality) <= static_cast<int> (musictheory::ChordQuality::Sus4))
+        qualityBox.setSelectedItemIndex (static_cast<int> (event.quality), juce::dontSendNotification);
+    else
+        qualityBox.setSelectedId (0, juce::dontSendNotification);   // a non-tertian degree (pentatonic/blues): shows the "Quality" prompt
+
+    extensionBox.setSelectedItemIndex (static_cast<int> (event.extension), juce::dontSendNotification);
+
+    {
+        static constexpr double gateValues[4] = { 0.25, 0.5, 0.8, 1.0 };
+        int closestGate = 3;
+        double closestGateDistance = 1.0e9;
+
+        for (int i = 0; i < 4; ++i)
+        {
+            const double distance = std::abs (gateValues[i] - event.arpGate);
+            if (distance < closestGateDistance)
+            {
+                closestGateDistance = distance;
+                closestGate = i;
+            }
+        }
+
+        gateBox.setSelectedItemIndex (closestGate, juce::dontSendNotification);
+    }
 
     rhythmBox.setSelectedItemIndex (static_cast<int> (event.rhythm), juce::dontSendNotification);
     bassBox.setSelectedItemIndex (static_cast<int> (event.bassMode), juce::dontSendNotification);
@@ -581,12 +690,201 @@ void HomeChordsAudioProcessorEditor::pushSelectedEventChange()
         return;
 
     auto updated = processor.progression.getEvent (index);
+    if (qualityBox.getSelectedItemIndex() >= 0)
+        updated.quality = static_cast<musictheory::ChordQuality> (juce::jlimit (0, 5, qualityBox.getSelectedItemIndex()));
+
+    updated.extension = static_cast<musictheory::Extension> (juce::jlimit (0, musictheory::numExtensions - 1, extensionBox.getSelectedItemIndex()));
+
+    {
+        static constexpr double gateValues[4] = { 0.25, 0.5, 0.8, 1.0 };
+        updated.arpGate = gateValues[juce::jlimit (0, 3, gateBox.getSelectedItemIndex())];
+    }
+
     updated.rhythm = static_cast<progression::RhythmPattern> (juce::jlimit (0, 7, rhythmBox.getSelectedItemIndex()));
     updated.bassMode = static_cast<progression::BassMode> (juce::jlimit (0, 4, bassBox.getSelectedItemIndex()));
     updated.arpMode = static_cast<progression::ArpMode> (juce::jlimit (0, 4, arpModeBox.getSelectedItemIndex()));
     updated.arpRateBeats = arpRateValues[juce::jlimit (0, 3, arpRateBox.getSelectedItemIndex())];
 
     timelineComponent.updateSelected (updated);
+}
+
+void HomeChordsAudioProcessorEditor::setSelectionControlsVisible (bool visible)
+{
+    for (auto* component : std::initializer_list<juce::Component*> { &qualityBox, &extensionBox, &rhythmBox, &bassBox,
+                                                                      &arpModeBox, &arpRateBox, &gateBox,
+                                                                      &deleteEventButton, &duplicateEventButton })
+        component->setVisible (visible);
+}
+
+double HomeChordsAudioProcessorEditor::snapBeatsFromParam() const
+{
+    const int index = static_cast<int> (processor.apvts.getRawParameterValue ("SNAP")->load());
+
+    switch (index)
+    {
+        case 1:  return 0.5;
+        case 2:  return 1.0;
+        case 3:  return 2.0;
+        case 4:  return processor.getBeatsPerBar();
+        default: return 0.25;
+    }
+}
+
+void HomeChordsAudioProcessorEditor::showColorChords()
+{
+    const auto chords = processor.getCurrentColorChords();
+    const auto keyNames = musictheory::getAllKeyNames();
+    const auto keyName = keyNames[juce::jlimit (0, keyNames.size() - 1, processor.getKeyTonicPitchClass())];
+    const auto heading = "Colour chords in " + keyName + " " + musictheory::getScaleName (processor.getScaleType());
+
+    auto panel = std::make_unique<homeUI::ColorChordPanel> (chords, heading);
+
+    panel->onChosen = [this, chords] (int index)
+    {
+        if (index < 0 || index >= static_cast<int> (chords.size()))
+            return;
+
+        processor.addColorChordToTimeline (chords[static_cast<size_t> (index)]);
+        timelineComponent.refreshFromModel();
+    };
+
+    juce::CallOutBox::launchAsynchronously (std::move (panel), colorButton.getScreenBounds(), nullptr);
+}
+
+void HomeChordsAudioProcessorEditor::exportMidiWithDialog()
+{
+    if (processor.progression.isEmpty())
+        return;
+
+    const auto keyNames = musictheory::getAllKeyNames();
+    const auto keyName = keyNames[juce::jlimit (0, keyNames.size() - 1, processor.getKeyTonicPitchClass())];
+    const auto fileName = juce::File::createLegalFileName ("Home-Chords " + keyName + " " + musictheory::getScaleName (processor.getScaleType()));
+
+    fileChooser = std::make_unique<juce::FileChooser> ("Export progression as a MIDI file",
+                                                       juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                                                           .getChildFile (fileName + ".mid"),
+                                                       "*.mid;*.midi");
+
+    const auto flags = juce::FileBrowserComponent::saveMode
+                     | juce::FileBrowserComponent::canSelectFiles
+                     | juce::FileBrowserComponent::warnAboutOverwriting;
+
+    fileChooser->launchAsync (flags, [safe = juce::Component::SafePointer<HomeChordsAudioProcessorEditor> (this)]
+                                      (const juce::FileChooser& chooser)
+    {
+        if (safe == nullptr)
+            return;
+
+        auto destination = chooser.getResult();
+
+        if (destination == juce::File())
+            return;   // cancelled
+
+        if (! destination.hasFileExtension ("mid;midi"))
+            destination = destination.withFileExtension ("mid");
+
+        const auto midiFile = midiexport::buildMidiFile (safe->processor.progression, safe->processor.getExportSettings());
+
+        if (! midiexport::writeMidiFile (midiFile, destination))
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Export failed",
+                                                    "Couldn't write " + destination.getFullPathName());
+    });
+}
+
+// Called when the drag tile is pulled: writes the progression to a temp .mid
+// and hands its path to the OS drag-and-drop. An empty File cancels the drag.
+juce::File HomeChordsAudioProcessorEditor::writeDragFile()
+{
+    if (processor.progression.isEmpty())
+        return {};
+
+    const auto keyNames = musictheory::getAllKeyNames();
+    const auto keyName = keyNames[juce::jlimit (0, keyNames.size() - 1, processor.getKeyTonicPitchClass())];
+    const auto fileName = juce::File::createLegalFileName ("Home-Chords " + keyName + " " + musictheory::getScaleName (processor.getScaleType()));
+
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                          .getChildFile ("Home-Chords")
+                          .getChildFile (fileName + ".mid");
+
+    const auto midiFile = midiexport::buildMidiFile (processor.progression, processor.getExportSettings());
+
+    return midiexport::writeMidiFile (midiFile, file) ? file : juce::File();
+}
+
+// Outlines the chords that commonly follow the last chord played or placed.
+// "Last" is whichever happened most recently: a live key press, or the
+// timeline changing (ADD mode, a colour chord, a preset, an undo).
+void HomeChordsAudioProcessorEditor::updateHints (juce::uint32 triggeredSlots, juce::uint32 activeSlots)
+{
+    const auto freshSlots = triggeredSlots | (activeSlots & ~previousActiveMask);
+    previousActiveMask = activeSlots;
+
+    if (freshSlots != 0)
+    {
+        for (int i = musictheory::maxDiatonicSlots - 1; i >= 0; --i)
+        {
+            if ((freshSlots & (1u << static_cast<unsigned> (i))) != 0)
+            {
+                lastPlayedSlot = i;
+                break;
+            }
+        }
+    }
+
+    const auto revision = processor.progression.getRevision();
+    if (revision != lastSeenRevision)
+    {
+        lastSeenRevision = revision;
+        lastHintSourceWasLive = false;
+    }
+
+    if (freshSlots != 0)
+        lastHintSourceWasLive = true;
+
+    int fromDegree = -1;
+
+    if (lastHintSourceWasLive)
+    {
+        fromDegree = lastPlayedSlot;
+    }
+    else if (! processor.progression.isEmpty())
+    {
+        // The chord that ends last is the one the next chord follows.
+        double latestEnd = -1.0;
+        for (int i = 0; i < processor.progression.size(); ++i)
+        {
+            const auto& event = processor.progression.getEvent (i);
+            if (event.endBeats() > latestEnd)
+            {
+                latestEnd = event.endBeats();
+                fromDegree = event.scaleDegree;   // -1 for a colour chord: no hints
+            }
+        }
+    }
+    else
+    {
+        fromDegree = lastPlayedSlot;
+    }
+
+    const bool hintsOn = processor.apvts.getRawParameterValue ("HINTS")->load() >= 0.5f;
+    const auto scale = processor.getScaleType();
+
+    // Only touch the cards when something that affects them changed.
+    const int signature = ((hintsOn ? 1 : 0) * 1000 + (fromDegree + 1) * 20 + static_cast<int> (scale)) * 10 + currentSlotCount;
+    if (signature == hintSignature)
+        return;
+
+    hintSignature = signature;
+
+    for (auto& card : chordCards)
+        card.setSuggestion (0, {});
+
+    if (! hintsOn || fromDegree < 0)
+        return;
+
+    for (const auto& suggestion : musictheory::suggestNext (fromDegree, scale))
+        if (suggestion.scaleDegree < currentSlotCount)
+            chordCards[static_cast<size_t> (suggestion.scaleDegree)].setSuggestion (suggestion.rank, suggestion.reason);
 }
 
 void HomeChordsAudioProcessorEditor::applyPreset (int presetIndex)

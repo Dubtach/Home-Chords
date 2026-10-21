@@ -70,6 +70,23 @@ namespace musictheory
     inline constexpr int maxDiatonicSlots = 7;
     inline constexpr int maxChordTones = 4;
 
+    // A voiced chord can have more notes than the chord has tones: styles add
+    // a doubled/bass note (see Voicing.h). Everything that stores voiced
+    // notes sizes its storage with this, not maxChordTones.
+    inline constexpr int maxVoicedNotes = 6;
+
+    // How a chord's tones are spread across the keyboard (spec "Auto Voicing").
+    enum class VoicingStyle
+    {
+        Close = 0,   // tones stacked as tightly as the inversion allows
+        Open,        // "drop 2": second-highest tone down an octave
+        Wide,        // Open, plus the lowest tone doubled an octave below
+        Piano,       // the chord as-is, plus its root an octave below (left hand)
+        count
+    };
+
+    inline constexpr int numVoicingStyles = static_cast<int> (VoicingStyle::count);
+
     // A chord, reduced to exactly what the audio thread needs to turn it
     // into MIDI notes: a root pitch class and a fixed set of semitone
     // offsets above that root. No heap, no juce::String -- safe to build

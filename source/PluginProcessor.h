@@ -3,6 +3,9 @@
 #include <JuceHeader.h>
 #include "MusicTheory/MusicTheoryEngine.h"
 #include "MusicTheory/Presets.h"
+#include "MusicTheory/ColorChords.h"
+#include "MusicTheory/Suggestions.h"
+#include "Midi/MidiExport.h"
 #include "Midi/ChordKeyboardEngine.h"
 #include "Midi/NoteLedger.h"
 #include "Preview/PreviewSynth.h"
@@ -25,8 +28,12 @@
 // PLAY mode sounds a slot live; ADD mode (keyboard/MIDI only, not mouse --
 // see ChordKeyboardEngine) appends that slot's current chord to the end of
 // `progression`, which SequencePlayer plays back on its own internal
-// transport (Play/Stop/Loop). Every progression edit goes through
-// `undoManager`.
+// transport (Play/Stop/Loop) -- or, with SYNC_HOST on, in lockstep with the
+// host's transport. Every progression edit goes through `undoManager`.
+//
+// Also here: voicing styles (Close/Open/Wide/Piano), humanize, borrowed/
+// colour chords, next-chord suggestions (UI-side, see PluginEditor), and
+// MIDI-file export of the progression.
 // =============================================================================
 
 class HomeChordsAudioProcessor : public juce::AudioProcessor
@@ -94,6 +101,24 @@ public:
     // undoManager. Message thread only -- mutates progression/undoManager,
     // neither of which is real-time safe.
     void addChordFromSlotToTimeline (int slot);
+
+    // Appends a borrowed/colour chord (see MusicTheory/ColorChords.h) to the
+    // end of the progression, one bar long, through undoManager. Message
+    // thread only.
+    void addColorChordToTimeline (const musictheory::ColorChord& chord);
+
+    // Colour chords for the current Key/Scale, spelled per NOTE_SPELLING.
+    std::vector<musictheory::ColorChord> getCurrentColorChords() const;
+
+    // The current VOICING parameter.
+    musictheory::VoicingStyle getVoicingStyle() const noexcept;
+
+    // True if note names should be spelled with flats right now (the
+    // NOTE_SPELLING preference, or the key's own bias under Auto).
+    bool shouldSpellWithFlats() const noexcept;
+
+    // Everything the MIDI exporter needs, read from the current parameters.
+    midiexport::ExportSettings getExportSettings() const;
 
     int getKeyTonicPitchClass() const noexcept;
     musictheory::ScaleType getScaleType() const noexcept;
@@ -178,6 +203,13 @@ private:
     std::atomic<float>* autoInversionParam = nullptr;
     std::atomic<float>* tempoParam = nullptr;
     std::atomic<float>* loopEnabledParam = nullptr;
+    std::atomic<float>* voicingParam = nullptr;
+    std::atomic<float>* humanizeTimeParam = nullptr;
+    std::atomic<float>* humanizeVelParam = nullptr;
+    std::atomic<float>* syncHostParam = nullptr;
+
+    // Audio-thread-only: was the sequencer following the host last block?
+    bool wasHostSyncing = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HomeChordsAudioProcessor)
 };

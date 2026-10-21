@@ -103,7 +103,8 @@ namespace midiengine
 
     void ChordKeyboardEngine::noteOnSlot (juce::MidiBuffer& midiOut, NoteLedger& ledger, int slot,
                                            const musictheory::RtChordShape& rootPositionShape, int anchorPitchClass,
-                                           int rootOctaveOffset, int velocity, int midiChannel, bool autoInversion) noexcept
+                                           int rootOctaveOffset, int velocity, int midiChannel, bool autoInversion,
+                                           musictheory::VoicingStyle style) noexcept
     {
         const int anchorMidi = musictheory::anchorMidiNote (anchorPitchClass, rootOctaveOffset);
         const int rootMidiNote = musictheory::placeRootAscending (rootPositionShape.rootPitchClass, anchorPitchClass, anchorMidi);
@@ -112,8 +113,14 @@ namespace midiengine
                                  ? musictheory::chooseInversionNearest (rootPositionShape, rootMidiNote, lastPlayedCentroid())
                                  : 0;
 
+        // The close voicing is what voice-leading remembers and compares
+        // against (so a spread style can't make later chords drift
+        // register); the styled voicing is what actually sounds.
+        std::array<int, musictheory::maxChordTones> closeNotes {};
+        const int closeCount = musictheory::voiceShape (rootPositionShape, rootMidiNote, inversion, closeNotes);
+
         auto& voices = heldVoices[static_cast<size_t> (slot)];
-        voices.count = musictheory::voiceShape (rootPositionShape, rootMidiNote, inversion, voices.notes);
+        voices.count = musictheory::applyVoicingStyle (closeNotes, closeCount, rootMidiNote, style, voices.notes);
 
         const auto clampedVelocity = static_cast<juce::uint8> (musictheory::compensateVelocityForToneCount (velocity, voices.count));
 
@@ -122,9 +129,9 @@ namespace midiengine
 
         // Remember what was actually played so the *next* chord (whichever
         // slot, whenever it's triggered) can voice-lead from it.
-        lastPlayedCount = voices.count;
-        for (int i = 0; i < voices.count; ++i)
-            lastPlayedNotes[static_cast<size_t> (i)] = voices.notes[static_cast<size_t> (i)];
+        lastPlayedCount = closeCount;
+        for (int i = 0; i < closeCount; ++i)
+            lastPlayedNotes[static_cast<size_t> (i)] = closeNotes[static_cast<size_t> (i)];
     }
 
     void ChordKeyboardEngine::noteOffSlot (juce::MidiBuffer& midiOut, NoteLedger& ledger, int slot, int midiChannel) noexcept
@@ -140,7 +147,8 @@ namespace midiengine
 
     void ChordKeyboardEngine::renderBlockStart (juce::MidiBuffer& midiOut, NoteLedger& ledger,
                                                  const musictheory::DiatonicShapeSet& currentShapes,
-                                                 int rootOctaveOffset, int velocity, int midiChannel, bool autoInversion) noexcept
+                                                 int rootOctaveOffset, int velocity, int midiChannel, bool autoInversion,
+                                                 musictheory::VoicingStyle style) noexcept
     {
         const auto combined = requestedMask.load (std::memory_order_relaxed)
                              | mouseMask.load (std::memory_order_relaxed)
@@ -172,7 +180,7 @@ namespace midiengine
                 // to play -- pressing it is a no-op, not an error.
                 if (slot < currentShapes.count)
                     noteOnSlot (midiOut, ledger, slot, currentShapes.shapes[static_cast<size_t> (slot)],
-                                anchorPitchClass, rootOctaveOffset, velocity, midiChannel, autoInversion);
+                                anchorPitchClass, rootOctaveOffset, velocity, midiChannel, autoInversion, style);
             }
             else
             {

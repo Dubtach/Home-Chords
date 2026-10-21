@@ -175,21 +175,13 @@ look non-idiomatic on a few unusual combinations. See
 - **Settings popup**: the header's small button opens a popup for the
   two preferences above (keyboard mode, note spelling).
 
-## Known scope limits in this pass (deliberate, not oversights)
+## Known scope limits (deliberate, not oversights)
 
-- **The sequencer's transport is self-contained, not host-synced.** It
-  never reads `AudioPlayHead` — Play/Stop/tempo are entirely this
-  plugin's own, independent of the host transport. Genuine host-sync is
-  real additional work for a future pass.
-- **The sequencer doesn't auto-invert between timeline events.** Auto
-  Inversion's voice-leading is a *live-play* feature. Each timeline event
-  plays its own root position (or Third/Fifth bass inversion)
-  independently; there's no smoothing of movement *between* consecutive
-  timeline chords the way there is between live-played ones.
-  `SequencePlayer::startEvent` does feed its played notes into the live
-  engine's voice-leading memory, so playing live right after the
-  sequencer stops leads smoothly from it — but sequenced-to-sequenced
-  voice-leading isn't implemented.
+*(Older limits that the v2 pass below removed — host sync, sequenced
+voice-leading, timeline spelling, editable quality/extension, snap grid,
+MIDI export, colour chords, suggestions, humanize, voicing styles — have
+been deleted from this list. What remains:)*
+
 - **Rhythm/arpeggio pulses are block-quantized, not sample-accurate** —
   a deliberate trade-off. An event's *start and end* are placed at the
   exact interpolated sample within whichever block they fall in (so
@@ -204,25 +196,17 @@ look non-idiomatic on a few unusual combinations. See
 - **Loop wrap can drop up to one block's worth of time** (a few ms) right
   at the loop boundary rather than precisely splitting a block across the
   seam. Inaudible at normal block sizes; a named simplification.
-- **Timeline blocks always display with sharp spelling**, regardless of
-  the Note Spelling preference — `TimelineComponent` isn't threaded
-  through to that parameter yet. The chord row and override popup do
-  respect it correctly.
-- **An existing timeline block's quality/extension isn't editable after
-  placement** — it inherits whatever the live slot's quality/extension
-  was at the moment it was added (or whatever a preset specifies). Only
-  Rhythm/Bass/Arp are editable post-placement, via the selected-event
-  toolbar. A reasonable next addition, scoped out here for time.
 - **External MIDI keyboard velocity is ignored** in favour of the
   Velocity knob, for consistency with computer-keyboard input (which has
   no real velocity) and to avoid threading a second, per-source velocity
   through `ChordKeyboardEngine`.
-- **No MIDI drag-out or file export** (spec sections 28–29), no sections
-  (30), no borrowed/color chords (17), no suggestions (18), no
-  humanization (24), no full Auto Voicing with Open/Wide/Piano/Simple
-  modes (13) — Auto Inversion remains the only voicing mode.
-- **Configurable snap grid** (spec section 10) isn't implemented — the
-  timeline snaps to a fixed quarter-beat grid.
+- **Sections** (spec section 30) are not implemented.
+- **No "Simple" voicing mode** — voicing styles are Close / Open / Wide /
+  Piano.
+- **MIDI export is rendered, not copied**: the file is produced by running
+  the real SequencePlayer offline (48 kHz, 512-sample blocks, 960 PPQ), so
+  it matches playback, including humanize and voice-leading, but humanize
+  jitter in the file is one deterministic take, not "live" randomness.
 
 ## Key architectural decisions (this pass)
 
@@ -323,6 +307,46 @@ revision/copy/round-trip tests for the model and a transaction-grouping test.
 mouse-driven timeline gestures (they need a real UI), `Arpeggio`'s `arpGate`
 field (stored and saved but not yet applied -- each step is held until the
 next), and the Windows/macOS-specific CI steps (pluginval, packaging).
+
+## v2 pass — features added
+
+Added on top of the passing CI build:
+
+- **Host-transport sync** (`Host sync` checkbox, `SYNC_HOST`): when on,
+  the sequencer follows the host's play state and PPQ position
+  (`SequencePlayer::syncToHost`); the internal Play/Restart/Loop/Tempo are
+  disabled. Turning it off stops the sequencer and releases notes.
+- **MIDI export and drag-out**: `Midi/MidiExport.*` renders the timeline to
+  a format-1 `.mid`. *Export* opens an async file chooser; the *DRAG MIDI*
+  tile writes a temp file and starts an external drag.
+- **Borrowed / colour chords** (`MusicTheory/ColorChords.*`, `Colour`
+  button): 9 chords for major-sounding keys (bIII, iv, bVI, bVII, bII, V/V,
+  V/vi, V/ii, I7) and 7 for minor-sounding ones; flat-labelled chords are
+  spelled with flats. Adds to the timeline as their own events.
+- **Chord suggestions** (`MusicTheory/Suggestions.*`, `Hints` toggle):
+  after the last chord, up to 3 likely next chords get a dashed outline,
+  the top one a "NEXT" tag, and a tooltip with the reason.
+- **Humanize**: timing (0–30 ms) and velocity (0–30 %) knobs; deterministic
+  RNG, applied in the sequencer and in exports.
+- **Voicing styles** (Close/Open/Wide/Piano) and **sequenced voice-leading**
+  (Bass=Inversion events auto-invert between consecutive timeline chords).
+- **Snap grid** (1/16, 1/8, 1/4, 1/2, Bar), **timeline spelling** that
+  follows the sharps/flats preference, **editable quality/extension** on
+  placed events, and a per-event **arp gate**.
+- Fixes made along the way: see the first pass notes (TimelineComponent
+  compile errors, model locking, undo transactions, etc.).
+
+### v2 testing
+
+- 76 Catch2 cases / 20,389 assertions pass (built locally with g++ against
+  JUCE modules); new suites cover voice-leading, colour chords,
+  suggestions and export (including auto-inversion).
+- All sources compile with `clang -fsyntax-only` against JUCE develop with
+  no warnings, and a link-level symbol check found no undefined project
+  symbols.
+- **Not run here**: the GUI itself. The editor wiring, drag-out, file
+  chooser, host sync against a real host, and tooltip/hint visuals are
+  compile-checked only. Click through them and check the CI run.
 
 ## Testing performed
 
@@ -467,6 +491,6 @@ keyboard/timeline behaviour without a DAW in the loop.
    a preset application; numeric keys and MIDI keyboard white keys both
    triggering the right chords.
 4. Push to GitHub and check the Actions tab.
-5. After that: host-transport sync, sample-accurate internal pulses,
-   editable quality/extension on placed timeline blocks, and the rest of
-   the "not started" list are the natural next pieces.
+5. After that: sections (spec 30), per-source MIDI keyboard velocity, a
+   Simple voicing mode, and sample-accurate internal pulses are the
+   natural next pieces.

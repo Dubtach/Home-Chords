@@ -134,10 +134,7 @@ namespace timeline
                 g.drawRoundedRectangle (bounds.reduced (1.5f), 6.0f, 2.0f);
             }
 
-            // Spelling always defaults to sharps here: this component isn't
-            // threaded through to the NOTE_SPELLING parameter, a minor,
-            // documented gap rather than an oversight (see STATUS.md).
-            const auto rootName = musictheory::noteName (event.rootPitchClass, false);
+            const auto rootName = musictheory::noteName (event.rootPitchClass, useFlats);
             const auto chordName = rootName + musictheory::chordQualitySuffix (event.quality)
                                             + musictheory::extensionSuffix (event.extension);
 
@@ -341,6 +338,15 @@ namespace timeline
         undoManager.beginNewTransaction ("Edit chord");
         undoManager.perform (new progression::UpdateChordAction (model, selectedId, newState));
         repaint();
+    }
+
+    void TimelineComponent::setUseFlats (bool shouldUseFlats)
+    {
+        if (useFlats != shouldUseFlats)
+        {
+            useFlats = shouldUseFlats;
+            repaint();
+        }
     }
 
     void TimelineComponent::refreshFromModel()

@@ -154,3 +154,75 @@ TEST_CASE ("Presets apply scale-aware, not as fixed note names", "[presets]")
             CHECK (model.getEvent (i).endBeats() == model.getEvent (i + 1).startBeats);
     }
 }
+
+TEST_CASE ("Voicing styles re-spread a close C major triad", "[voicing][style]")
+{
+    std::array<int, maxChordTones> close { 60, 64, 67, 0 };
+    std::array<int, maxVoicedNotes> out {};
+
+    SECTION ("Close leaves it alone")
+    {
+        REQUIRE (applyVoicingStyle (close, 3, 60, VoicingStyle::Close, out) == 3);
+        CHECK (out[0] == 60);
+        CHECK (out[1] == 64);
+        CHECK (out[2] == 67);
+    }
+
+    SECTION ("Open drops the second-highest tone an octave")
+    {
+        REQUIRE (applyVoicingStyle (close, 3, 60, VoicingStyle::Open, out) == 3);
+        CHECK (out[0] == 52);   // E3
+        CHECK (out[1] == 60);   // C4
+        CHECK (out[2] == 67);   // G4
+    }
+
+    SECTION ("Wide adds the lowest tone an octave below the opened voicing")
+    {
+        REQUIRE (applyVoicingStyle (close, 3, 60, VoicingStyle::Wide, out) == 4);
+        CHECK (out[0] == 40);   // E2
+        CHECK (out[1] == 52);
+        CHECK (out[2] == 60);
+        CHECK (out[3] == 67);
+    }
+
+    SECTION ("Piano adds the root an octave below")
+    {
+        REQUIRE (applyVoicingStyle (close, 3, 60, VoicingStyle::Piano, out) == 4);
+        CHECK (out[0] == 48);
+        CHECK (out[1] == 60);
+        CHECK (out[2] == 64);
+        CHECK (out[3] == 67);
+    }
+}
+
+TEST_CASE ("Voicing styles keep every note legal and ascending for every chord", "[voicing][style]")
+{
+    for (int root = 0; root < 12; ++root)
+        for (int octaveBase : { 0, 12, 24, 108, 120 })   // includes extremes that force clamping
+            for (int style = 0; style < numVoicingStyles; ++style)
+            {
+                const auto shape = buildOverriddenShape (root, ChordQuality::Major, Extension::MajorSeventh);
+
+                for (int inversion = 0; inversion < shape.toneCount; ++inversion)
+                {
+                    std::array<int, maxChordTones> close {};
+                    const int rootMidi = octaveBase + root;
+                    const int n = voiceShape (shape, rootMidi, inversion, close);
+
+                    std::array<int, maxVoicedNotes> out {};
+                    const int m = applyVoicingStyle (close, n, rootMidi, static_cast<VoicingStyle> (style), out);
+
+                    REQUIRE (m >= 1);
+                    REQUIRE (m <= maxVoicedNotes);
+
+                    for (int i = 0; i < m; ++i)
+                    {
+                        CHECK (out[static_cast<size_t> (i)] >= 0);
+                        CHECK (out[static_cast<size_t> (i)] <= 127);
+
+                        if (i > 0)
+                            CHECK (out[static_cast<size_t> (i)] > out[static_cast<size_t> (i - 1)]);
+                    }
+                }
+            }
+}
