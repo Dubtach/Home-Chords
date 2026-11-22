@@ -148,7 +148,8 @@ namespace midiengine
     void ChordKeyboardEngine::renderBlockStart (juce::MidiBuffer& midiOut, NoteLedger& ledger,
                                                  const musictheory::DiatonicShapeSet& currentShapes,
                                                  int rootOctaveOffset, int velocity, int midiChannel, bool autoInversion,
-                                                 musictheory::VoicingStyle style) noexcept
+                                                 musictheory::VoicingStyle style,
+                                                 int anchorPitchClassOverride) noexcept
     {
         const auto combined = requestedMask.load (std::memory_order_relaxed)
                              | mouseMask.load (std::memory_order_relaxed)
@@ -159,10 +160,13 @@ namespace midiengine
         if (changed == 0)
             return;
 
-        // Slot 0's root is always the scale tonic -- an override never
-        // changes a slot's root, only what's built on it -- so it's the
-        // fixed point every other slot's root is placed relative to.
-        const int anchorPitchClass = currentShapes.count > 0 ? currentShapes.shapes[0].rootPitchClass : 0;
+        // Every slot's root is placed relative to one fixed point: the scale
+        // tonic. The caller passes it explicitly because a slot holding a
+        // borrowed chord can have a root that isn't the tonic; otherwise
+        // slot 0's root (the tonic, for a plain diatonic row) is used.
+        const int anchorPitchClass = anchorPitchClassOverride >= 0
+                                         ? anchorPitchClassOverride
+                                         : (currentShapes.count > 0 ? currentShapes.shapes[0].rootPitchClass : 0);
 
         for (int slot = 0; slot < numSlots; ++slot)
         {

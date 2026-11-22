@@ -171,3 +171,27 @@ namespace progression
         return model;
     }
 }
+
+namespace progression
+{
+    double ProgressionModel::findFreeStart (double desiredStart, double length, const std::vector<juce::Uuid>& ignore) const
+    {
+        double start = desiredStart < 0.0 ? 0.0 : desiredStart;
+        const double epsilon = 1.0e-6;
+
+        // Events are sorted by start, so one forward pass that pushes the
+        // candidate past every event it overlaps settles it.
+        for (const auto& event : events)
+        {
+            if (std::find (ignore.begin(), ignore.end(), event.id) != ignore.end())
+                continue;
+
+            const bool overlaps = start < event.endBeats() - epsilon && start + length > event.startBeats + epsilon;
+
+            if (overlaps)
+                start = event.endBeats();
+        }
+
+        return start;
+    }
+}

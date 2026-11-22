@@ -1,4 +1,5 @@
 #include "ColorChords.h"
+#include <iterator>
 
 namespace musictheory
 {
@@ -59,7 +60,8 @@ namespace musictheory
                 const bool flatLabelled = chord.label.startsWithChar ('b');
                 const bool useFlats = ! sharpsForced && (keyUsesFlats || flatLabelled);
 
-                chord.chordName = noteName (chord.rootPitchClass, useFlats) + suffix;
+                chord.rootName = noteName (chord.rootPitchClass, useFlats);
+                chord.chordName = chord.rootName + suffix;
                 out.push_back (std::move (chord));
             }
         }
@@ -73,6 +75,25 @@ namespace musictheory
         // Third scale degree (index 2): 3 semitones = minor, 4 = major.
         // Scales too short to have one (never the case today) count as major.
         return count > 2 && semitones[2] == 3;
+    }
+
+    int numColorChords (ScaleType scale) noexcept
+    {
+        return isMinorSounding (scale) ? static_cast<int> (std::size (minorSide))
+                                       : static_cast<int> (std::size (majorSide));
+    }
+
+    RtChordShape colorChordShape (int index, int tonicPitchClass, ScaleType scale) noexcept
+    {
+        const bool minor = isMinorSounding (scale);
+        const int count = numColorChords (scale);
+
+        if (index < 0 || index >= count)
+            return buildOverriddenShape (((tonicPitchClass % 12) + 12) % 12, ChordQuality::Major, Extension::None);
+
+        const auto& t = minor ? minorSide[index] : majorSide[index];
+        const int root = ((tonicPitchClass + t.semitones) % 12 + 12) % 12;
+        return buildOverriddenShape (root, t.quality, t.extension);
     }
 
     std::vector<ColorChord> buildColorChords (int tonicPitchClass, ScaleType scale, NoteSpelling spelling)

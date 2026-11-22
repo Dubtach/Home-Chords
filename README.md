@@ -4,10 +4,10 @@ A MIDI chord generator / songwriting plugin — part of the Dubtach "Home"
 series alongside Home-Disto and Home-Sidechain.
 
 Pick a Key and Scale, and the 7 diatonic chords are laid out on your
-computer keyboard (**A S D F G H J** and/or **1-7**), your mouse, or an
-external MIDI keyboard's white keys. Play live, or flip on Add Mode to
-build a progression on the timeline, complete with rhythm patterns, an
-arpeggiator, a bass system, and presets.
+computer keyboard (**A S D F G H J**, **1-7** or the **numpad**), your
+mouse, or an external MIDI keyboard's white keys. Play live, or drag the
+chord cards onto the timeline to build a progression, with global rhythm,
+arpeggiator and bass settings, borrowed chords, 27 presets, and MIDI export.
 
 > **This is still a work in progress**, built incrementally and tested
 > through real CI feedback plus a local compile-and-test review pass. See
@@ -66,9 +66,8 @@ source/
   Shared/
     HomeSeriesUI.h           The shared Home-series look (colours,
                           card/well painters, controls, ChordCard).
-    ChordEditPanel.h         Right-click quality/extension override popup.
+    HelpPanel.h              The "?" shortcut cheat-sheet popup.
     SettingsPanel.h          Keyboard-mode / note-spelling popup.
-    ColorChordPanel.h        Borrowed-chord picker popup.
     MidiDragTile.h           "DRAG MIDI" tile for dragging out a .mid.
 tests/                    Catch2 unit tests.
 ```
@@ -76,40 +75,37 @@ tests/                    Catch2 unit tests.
 ## Controls
 
 - **Key / Scale** — the two combo boxes in the header.
-- **A S D F G H J and/or 1-7** — play the 7 diatonic chords (which keys
-  are active is set in Settings). Also clickable, and playable from an
-  external MIDI keyboard's white keys (mapped to degrees 1–7 by ordinal
-  position, not absolute pitch).
-- **Right-click a chord card** — opens a popup to override that slot's
-  quality and/or extension, keeping the same root note. An overridden
-  card shows a small dot.
-- **Settings (the "..." button)** — keyboard input mode (Letters/
-  Numbers/Both) and note spelling (Auto/Sharps/Flats).
-- **Add Mode** — pressing a keyboard/MIDI key (not a mouse click) appends
-  that chord to the end of the timeline instead of just sounding it live.
-- **Timeline** — drag a block to move it, its right edge to resize it,
-  click to select it (shows the selected-block toolbar). Drag the small markers above the ruler to set the loop
-  range.
-- **Play / Stop / Restart / Loop** — the timeline's own transport, on its
-  own internal clock (Tempo knob).
-- **Host sync** — follow the host's transport and position instead; the
-  internal transport controls are disabled while it is on.
-- **Snap / Voicing** — timeline grid (1/16 … Bar) and voicing style
-  (Close/Open/Wide/Piano).
-- **Colour** — pick a borrowed chord (bIII, iv, bVI, V/V …) to append.
-- **Export / DRAG MIDI** — save the timeline as a .mid, or drag it into
-  a DAW track.
+- **Play chords** — **A S D F G H J**, **1-7**, the **numpad 1-7** (which
+  keys are active is set in Settings), the mouse, or an external **MIDI
+  keyboard**: the white keys C D E F G A B play chords 1-7 in any octave.
+- **Right-click a chord card** — Quality, Extension, and **Borrowed chord**
+  (bIII, iv, bVI, bVII, V/V ... for the key). The card changes to that
+  chord; "Reset to diatonic" undoes it. Overridden cards show a dot.
+- **Drag a chord card onto the timeline** to add it where you drop it
+  (snapped, never on top of another chord). Double-click a card to append it.
+- **Timeline** — click a block to select; shift/ctrl/cmd-click to add to
+  the selection; drag on empty space to rubber-band select; drag blocks to
+  move, the right edge to resize (all selected); drag blocks out of the
+  strip and release to delete; right-click for Delete / Duplicate / Copy /
+  Paste. Drag the small markers above the ruler to set the loop range
+  (it grows automatically to cover new chords).
+- **Rhythm / Bass / Arp / Rate / Gate** (the "All chords" row) — global:
+  changing one applies it to every chord on the timeline (one undo step),
+  and new chords pick up the current values.
+- **Play / Restart / Loop** — the timeline's own transport (Tempo knob).
+  **Host sync** follows the host's transport and position instead.
+- **Snap / Voicing / Time signature** — grid, chord spread, bar length.
+- **Presets** — 27 progressions in Pop, Jazz, Chill, Minor and Basics,
+  filtered to the ones that suit the current scale.
+- **Export / DRAG MIDI** — save the timeline as a .mid, or drag it into a DAW track.
 - **Hints** — dashed outlines mark likely next chords; "NEXT" is the top
   pick, hover for the reason.
-- **Selected block toolbar** — Quality, Extension, Rhythm, Bass, Arp mode/
-  rate, Gate, Delete, Duplicate.
-- **Humanize Time / Velocity** — footer knobs, applied to playback and
-  exports.
-- **Presets** — apply one of 5 scale-aware progression templates.
-- **Undo / Redo** — for every timeline edit.
-- **Auto Inversion** — on by default; smooths voice movement between
-  chords you play live.
-- **Octave / Velocity / Tempo / Preview** — the footer knobs/stepper.
+- **Humanize / Velocity / Tempo / Preview / Octave / Smooth voicing** — footer.
+- **Settings ("...")** — keyboard input mode and note spelling.
+- **Shortcuts** (press **?**): Space play/stop, Home restart, L loop,
+  Ctrl/Cmd+Z undo, +Shift+Z or Y redo, +A select all, +C/X/V copy/cut/paste,
+  +D duplicate, Delete remove, Left/Right nudge (Shift = a bar), Up/Down
+  octave, Esc deselect.
 
 Full detail, architectural reasoning, and an honest list of what isn't
 built yet (or is a deliberate simplification): [`STATUS.md`](STATUS.md).

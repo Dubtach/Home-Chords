@@ -25,7 +25,8 @@ namespace musictheory
     struct ColorChord
     {
         juce::String label;        // roman numeral in the current key, e.g. "bVII"
-        juce::String chordName;    // e.g. "Bb" in C major
+        juce::String rootName;     // e.g. "Bb" -- just the note
+        juce::String chordName;    // e.g. "Bb" in C major (note + quality/extension suffix)
         juce::String description;  // one line on why you'd use it
         int rootPitchClass = 0;
         ChordQuality quality = ChordQuality::Major;
@@ -35,6 +36,17 @@ namespace musictheory
 
     // True if the scale's third is minor (so borrowing comes from the parallel major).
     bool isMinorSounding (ScaleType scale) noexcept;
+
+    // How many colour chords the palette has for this scale (9 on the major
+    // side, 7 on the minor side). Real-time safe.
+    int numColorChords (ScaleType scale) noexcept;
+
+    // The shape of colour chord `index` (0-based, same order as
+    // buildColorChords) in this key. Real-time safe: no allocation, no
+    // strings -- this is what lets a chord card hold a borrowed chord and
+    // still be played from the audio thread. Out-of-range -> root-position
+    // tonic triad.
+    RtChordShape colorChordShape (int index, int tonicPitchClass, ScaleType scale) noexcept;
 
     // Builds the colour-chord palette for this key. Spelling follows `spelling`
     // exactly like buildDiatonicChords (Auto = the key's natural spelling).

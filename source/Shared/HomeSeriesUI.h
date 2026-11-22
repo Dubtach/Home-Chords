@@ -480,9 +480,13 @@ namespace homeUI
 
         // onPressStart/onPressEnd: left click/release, auditions the chord.
         // onEditRequested: right click (or ctrl-click on macOS), opens the
-        // quality/extension editor -- doesn't also fire onPressStart, so a
-        // right click never sounds the chord.
-        std::function<void()> onPressStart, onPressEnd, onEditRequested;
+        // chord's context menu -- doesn't also fire onPressStart, so a right
+        // click never sounds the chord.
+        // onDragRequested: the mouse moved a few pixels with the button down;
+        // the audition has already been released, and the owner should start
+        // a drag-and-drop (e.g. onto the timeline).
+        // onDoubleClicked: double-click (e.g. append the chord to the timeline).
+        std::function<void()> onPressStart, onPressEnd, onEditRequested, onDragRequested, onDoubleClicked;
 
         void paint (juce::Graphics& g) override
         {
@@ -552,6 +556,8 @@ namespace homeUI
             if (! hasChord())
                 return;
 
+            dragStarted = false;
+
             if (event.mods.isPopupMenu())
             {
                 if (onEditRequested != nullptr)
@@ -563,13 +569,38 @@ namespace homeUI
             }
         }
 
+        void mouseDrag (const juce::MouseEvent& event) override
+        {
+            if (! hasChord() || dragStarted || event.mods.isPopupMenu())
+                return;
+
+            if (event.getDistanceFromDragStart() < 6)
+                return;
+
+            dragStarted = true;
+
+            // Stop auditioning -- from here on it's a drag, not a key press.
+            if (onPressEnd != nullptr)
+                onPressEnd();
+
+            if (onDragRequested != nullptr)
+                onDragRequested();
+        }
+
+        void mouseDoubleClick (const juce::MouseEvent& event) override
+        {
+            if (hasChord() && ! event.mods.isPopupMenu() && onDoubleClicked != nullptr)
+                onDoubleClicked();
+        }
+
         void mouseUp (const juce::MouseEvent& event) override
         {
             // A right-click's mouseUp shouldn't stop a chord it never
-            // started -- only follow through for the same button that
-            // began the press.
-            if (hasChord() && ! event.mods.isPopupMenu() && onPressEnd != nullptr)
+            // started, and a drag has already released its audition.
+            if (hasChord() && ! event.mods.isPopupMenu() && ! dragStarted && onPressEnd != nullptr)
                 onPressEnd();
+
+            dragStarted = false;
         }
 
     private:
@@ -577,8 +608,27 @@ namespace homeUI
         juce::Colour accent = cyan;
         float lit = 0.0f;
         bool hasOverrideFlag = false;
+        bool dragStarted = false;
         int suggestionRank = 0;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChordCard)
+    };
+
+    // Smaller, lighter text for combo boxes, text buttons and popup menus so
+    // the compact layout doesn't look cramped.
+    class CompactLookAndFeel : public juce::LookAndFeel_V4
+    {
+    public:
+        juce::Font getComboBoxFont (juce::ComboBox& box) override
+        {
+            return homeUI::font (juce::jmin (12.5f, static_cast<float> (box.getHeight()) * 0.55f), false);
+        }
+
+        juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override
+        {
+            return homeUI::font (juce::jmin (12.0f, static_cast<float> (buttonHeight) * 0.5f), false);
+        }
+
+        juce::Font getPopupMenuFont() override { return homeUI::font (13.0f, false); }
     };
 }

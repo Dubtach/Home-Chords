@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <cmath>
 
 namespace
 {
@@ -38,6 +39,7 @@ HomeChordsAudioProcessor::HomeChordsAudioProcessor()
     {
         qualityOverrideParams[static_cast<size_t> (slot)] = apvts.getRawParameterValue (qualityParamId (slot));
         extensionOverrideParams[static_cast<size_t> (slot)] = apvts.getRawParameterValue (extensionParamId (slot));
+        colourOverrideParams[static_cast<size_t> (slot)] = apvts.getRawParameterValue (colourParamId (slot));
     }
 
     keyParam           = apvts.getRawParameterValue ("KEY");
@@ -58,6 +60,7 @@ HomeChordsAudioProcessor::HomeChordsAudioProcessor()
 
 juce::String HomeChordsAudioProcessor::qualityParamId (int slot)   { return "SLOT" + juce::String (slot) + "_QUALITY"; }
 juce::String HomeChordsAudioProcessor::extensionParamId (int slot) { return "SLOT" + juce::String (slot) + "_EXTENSION"; }
+juce::String HomeChordsAudioProcessor::colourParamId (int slot)    { return "SLOT" + juce::String (slot) + "_COLOUR"; }
 
 juce::AudioProcessorValueTreeState::ParameterLayout HomeChordsAudioProcessor::createParameters()
 {
@@ -98,9 +101,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout HomeChordsAudioProcessor::cr
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         "KEYBOARD_MODE", "Keyboard Input", juce::StringArray { "Letters", "Numbers", "Both" }, 2, ChoiceAttributes{}));
 
-    params.push_back (std::make_unique<juce::AudioParameterBool> (
-        "ADD_MODE", "Add Mode", false, BoolAttributes{}));
-
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         "TEMPO", "Tempo", juce::NormalisableRange<float> (20.0f, 300.0f, 0.1f), 120.0f,
         FloatAttributes{}.withLabel ("BPM")));
@@ -137,6 +137,25 @@ juce::AudioProcessorValueTreeState::ParameterLayout HomeChordsAudioProcessor::cr
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         "HINTS", "Next-Chord Hints", true, BoolAttributes{}));
 
+    // Global playback style, stamped onto every chord of the timeline (see
+    // applyPlaybackSettingsToTimeline). The choice lists mirror the tables in
+    // Progression/PlaybackSettings.h.
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        "RHYTHM", "Rhythm",
+        juce::StringArray { "Sustained", "Whole", "Half", "Quarter", "Eighth", "Sixteenth", "Strum", "Arpeggio" }, 0, ChoiceAttributes{}));
+
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        "BASS_MODE", "Bass", juce::StringArray { "Root", "Third", "Fifth", "Inversion" }, 3, ChoiceAttributes{}));
+
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        "ARP_MODE", "Arp Mode", juce::StringArray { "Off", "Up", "Down", "Up/Down", "Random" }, 0, ChoiceAttributes{}));
+
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        "ARP_RATE", "Arp Rate", juce::StringArray { "1/4", "1/8", "1/16", "1/32" }, 2, ChoiceAttributes{}));
+
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        "GATE", "Gate", juce::StringArray { "25%", "50%", "80%", "Legato" }, 2, ChoiceAttributes{}));
+
     // Index 0 = "Diatonic" (no override); indices 1-6 map to
     // ChordQuality::Major..Sus4 (see getSlotQualityOverride/
     // setSlotQualityOverride for the -1 offset that encodes this).
@@ -151,6 +170,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout HomeChordsAudioProcessor::cr
 
         params.push_back (std::make_unique<juce::AudioParameterChoice> (
             extensionParamId (slot), "Slot " + juce::String (slot + 1) + " Extension", extensionChoices, 0, ChoiceAttributes{}));
+
+        // 0 = the plain diatonic chord; 1..10 = borrowed/colour chord 1..10 for the key.
+        params.push_back (std::make_unique<juce::AudioParameterChoice> (
+            colourParamId (slot), "Slot " + juce::String (slot + 1) + " Colour Chord",
+            juce::StringArray { "Diatonic", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10" }, 0, ChoiceAttributes{}));
     }
 
     return { params.begin(), params.end() };
@@ -228,30 +252,68 @@ std::vector<musictheory::ChordDefinition> HomeChordsAudioProcessor::getCurrentDi
         juce::jlimit (0, 2, static_cast<int> (apvts.getRawParameterValue ("NOTE_SPELLING")->load())));
 
     auto chords = musictheory::buildDiatonicChords (getKeyTonicPitchClass(), getScaleType(), spelling);
+    const auto colourChords = musictheory::buildColorChords (getKeyTonicPitchClass(), getScaleType(), spelling);
 
     for (int slot = 0; slot < static_cast<int> (chords.size()); ++slot)
     {
+        auto& chord = chords[static_cast<size_t> (slot)];
+
         musictheory::SlotOverride slotOverride;
         slotOverride.qualityOverride = getSlotQualityOverride (slot);
         slotOverride.extension = getSlotExtensionOverride (slot);
 
-        chords[static_cast<size_t> (slot)] = musictheory::applyOverride (chords[static_cast<size_t> (slot)], slotOverride);
+        const int colour = getSlotColourIndex (slot);
+
+        if (colour < 0 || colour >= static_cast<int> (colourChords.size()))
+        {
+            chord = musictheory::applyOverride (chord, slotOverride);
+            continue;
+        }
+
+        // A borrowed chord replaces the diatonic one on this card.
+        const auto& borrowed = colourChords[static_cast<size_t> (colour)];
+        chord.rootPitchClass = borrowed.rootPitchClass;
+        chord.rootName = borrowed.rootName;
+        chord.quality = borrowed.quality;
+        chord.romanNumeral = borrowed.label;
+        chord.chordName = borrowed.chordName;
+        chord.shape = borrowed.shape;
+
+        if (slotOverride.isActive())
+        {
+            const auto quality = slotOverride.qualityOverride >= 0
+                                     ? static_cast<musictheory::ChordQuality> (slotOverride.qualityOverride)
+                                     : borrowed.quality;
+
+            chord.quality = quality;
+            chord.shape = musictheory::buildOverriddenShape (borrowed.rootPitchClass, quality, slotOverride.extension);
+            chord.chordName = borrowed.rootName + musictheory::chordQualitySuffix (quality)
+                                                + musictheory::extensionSuffix (slotOverride.extension);
+            chord.romanNumeral = borrowed.label + musictheory::extensionSuffix (slotOverride.extension);
+        }
     }
 
     return chords;
 }
 
-musictheory::RtChordShape HomeChordsAudioProcessor::effectiveShape (int slot, const musictheory::RtChordShape& diatonicShape) const noexcept
+musictheory::RtChordShape HomeChordsAudioProcessor::effectiveShape (int slot, const musictheory::RtChordShape& diatonicShape,
+                                                                     int tonicPitchClass, musictheory::ScaleType scale) const noexcept
 {
     if (slot < 0 || slot >= musictheory::maxDiatonicSlots)
         return diatonicShape;
+
+    auto base = diatonicShape;
+
+    const int colour = static_cast<int> (colourOverrideParams[static_cast<size_t> (slot)]->load()) - 1;
+    if (colour >= 0 && colour < musictheory::numColorChords (scale))
+        base = musictheory::colorChordShape (colour, tonicPitchClass, scale);
 
     musictheory::SlotOverride slotOverride;
     slotOverride.qualityOverride = static_cast<int> (qualityOverrideParams[static_cast<size_t> (slot)]->load()) - 1;
     slotOverride.extension = static_cast<musictheory::Extension> (
         static_cast<int> (extensionOverrideParams[static_cast<size_t> (slot)]->load()));
 
-    return musictheory::applyOverride (diatonicShape, slotOverride);
+    return musictheory::applyOverride (base, slotOverride);
 }
 
 int HomeChordsAudioProcessor::getSlotQualityOverride (int slot) const noexcept
@@ -292,48 +354,143 @@ void HomeChordsAudioProcessor::setSlotExtensionOverride (int slot, musictheory::
         *param = index;
 }
 
+int HomeChordsAudioProcessor::getSlotColourIndex (int slot) const noexcept
+{
+    if (slot < 0 || slot >= musictheory::maxDiatonicSlots)
+        return -1;
+
+    const int index = static_cast<int> (colourOverrideParams[static_cast<size_t> (slot)]->load()) - 1;
+    return index < musictheory::numColorChords (getScaleType()) ? index : -1;   // a stale index from another scale reads as "none"
+}
+
+void HomeChordsAudioProcessor::setSlotColourIndex (int slot, int indexOrMinus1)
+{
+    if (slot < 0 || slot >= musictheory::maxDiatonicSlots)
+        return;
+
+    const int clamped = juce::jlimit (-1, 9, indexOrMinus1);
+
+    if (auto* param = dynamic_cast<juce::AudioParameterChoice*> (apvts.getParameter (colourParamId (slot))))
+        *param = clamped + 1;
+}
+
 void HomeChordsAudioProcessor::clearSlotOverride (int slot)
 {
     setSlotQualityOverride (slot, -1);
     setSlotExtensionOverride (slot, musictheory::Extension::None);
+    setSlotColourIndex (slot, -1);
 }
 
-void HomeChordsAudioProcessor::addChordFromSlotToTimeline (int slot)
+bool HomeChordsAudioProcessor::makeEventFromSlot (int slot, progression::ChordEvent& out) const
 {
     const auto chords = getCurrentDiatonicChords();
 
     if (slot < 0 || slot >= static_cast<int> (chords.size()))
-        return;
+        return false;
 
     const auto& chord = chords[static_cast<size_t> (slot)];
+    const int colour = getSlotColourIndex (slot);
+
+    // The extension a card actually plays: its own override if set, else the
+    // borrowed chord's own (e.g. the 7th in V/V), else none.
+    auto extension = getSlotExtensionOverride (slot);
+
+    if (extension == musictheory::Extension::None && colour >= 0 && getSlotQualityOverride (slot) < 0)
+    {
+        const auto palette = getCurrentColorChords();
+        if (colour < static_cast<int> (palette.size()))
+            extension = palette[static_cast<size_t> (colour)].extension;
+    }
 
     progression::ChordEvent event;
-    event.scaleDegree = chord.scaleDegree;
+    event.scaleDegree = colour >= 0 ? -1 : chord.scaleDegree;   // a borrowed chord isn't a diatonic degree; hints skip it
     event.rootPitchClass = chord.rootPitchClass;
     event.quality = chord.quality;
-    event.extension = getSlotExtensionOverride (slot);
+    event.extension = extension;
     event.velocity = static_cast<int> (velocityParam->load());
-    event.startBeats = progression.getTotalLengthBeats();
+    event.startBeats = 0.0;
     event.lengthBeats = getBeatsPerBar();
+    getPlaybackSettings().applyTo (event);
 
-    // One undo step per chord added (ADD mode can append several in a row).
-    undoManager.beginNewTransaction ("Add chord");
-    undoManager.perform (new progression::AddChordAction (progression, event));
+    out = event;
+    return true;
 }
 
-void HomeChordsAudioProcessor::addColorChordToTimeline (const musictheory::ColorChord& chord)
+void HomeChordsAudioProcessor::addChordFromSlotToTimeline (int slot)
 {
     progression::ChordEvent event;
-    event.scaleDegree = -1;   // not a diatonic degree; next-chord hints skip it
-    event.rootPitchClass = chord.rootPitchClass;
-    event.quality = chord.quality;
-    event.extension = chord.extension;
-    event.velocity = static_cast<int> (velocityParam->load());
-    event.startBeats = progression.getTotalLengthBeats();
-    event.lengthBeats = getBeatsPerBar();
 
-    undoManager.beginNewTransaction ("Add colour chord");
+    if (! makeEventFromSlot (slot, event))
+        return;
+
+    event.startBeats = progression.getTotalLengthBeats();
+
+    undoManager.beginNewTransaction ("Add chord");
     undoManager.perform (new progression::AddChordAction (progression, event));
+    extendLoopToCoverProgression();
+}
+
+progression::PlaybackSettings HomeChordsAudioProcessor::getPlaybackSettings() const
+{
+    const auto value = [this] (const char* id) { return static_cast<int> (apvts.getRawParameterValue (id)->load()); };
+
+    return progression::PlaybackSettings::fromChoices (value ("RHYTHM"), value ("BASS_MODE"), value ("ARP_MODE"),
+                                                       value ("ARP_RATE"), value ("GATE"));
+}
+
+void HomeChordsAudioProcessor::applyPlaybackSettingsToTimeline()
+{
+    const auto settings = getPlaybackSettings();
+
+    std::vector<progression::ChordEvent> changed;
+
+    for (int i = 0; i < progression.size(); ++i)
+    {
+        const auto& event = progression.getEvent (i);
+
+        if (! settings.matches (event))
+        {
+            auto copy = event;
+            settings.applyTo (copy);
+            changed.push_back (copy);
+        }
+    }
+
+    if (changed.empty())
+        return;
+
+    undoManager.beginNewTransaction ("Change playback style");
+
+    for (const auto& event : changed)
+        undoManager.perform (new progression::UpdateChordAction (progression, event.id, event));
+}
+
+void HomeChordsAudioProcessor::replaceTimeline (const progression::ProgressionModel& model, const juce::String& undoName)
+{
+    const auto settings = getPlaybackSettings();
+
+    undoManager.beginNewTransaction (undoName);
+    undoManager.perform (new progression::ClearProgressionAction (progression));
+
+    for (int i = 0; i < model.size(); ++i)
+    {
+        auto event = model.getEvent (i);
+        event.velocity = static_cast<int> (velocityParam->load());
+        settings.applyTo (event);
+        undoManager.perform (new progression::AddChordAction (progression, event));
+    }
+
+    extendLoopToCoverProgression();
+}
+
+void HomeChordsAudioProcessor::extendLoopToCoverProgression()
+{
+    const double bar = getBeatsPerBar();
+    const double end = progression.getTotalLengthBeats();
+    const double needed = std::ceil (end / bar - 1.0e-9) * bar;
+
+    if (needed > sequencePlayer.getLoopEndBeats())
+        sequencePlayer.setLoopRange (sequencePlayer.getLoopStartBeats(), needed);
 }
 
 void HomeChordsAudioProcessor::setSequencePlaying (bool shouldPlay)
@@ -426,17 +583,19 @@ void HomeChordsAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     // writes) and sidesteps needing any cross-thread chord cache at all.
     const auto diatonicShapes = musictheory::buildDiatonicShapes (tonicPitchClass, scaleType);
 
-    // Apply each slot's quality/extension override (if any) on top of the
-    // diatonic shape -- same root, possibly different tones. This is the
+    // Apply each slot's colour chord / quality / extension override (if any)
+    // on top of the diatonic shape. This is the
     // one place processBlock and getCurrentDiatonicChords (the UI's view)
     // both go through effectiveShape(), so what's heard always matches
     // what's shown, override or not.
     musictheory::DiatonicShapeSet finalShapes;
     finalShapes.count = diatonicShapes.count;
     for (int slot = 0; slot < diatonicShapes.count; ++slot)
-        finalShapes.shapes[static_cast<size_t> (slot)] = effectiveShape (slot, diatonicShapes.shapes[static_cast<size_t> (slot)]);
+        finalShapes.shapes[static_cast<size_t> (slot)] = effectiveShape (slot, diatonicShapes.shapes[static_cast<size_t> (slot)],
+                                                                          tonicPitchClass, scaleType);
 
-    keyboardEngine.renderBlockStart (midi, noteLedger, finalShapes, octaveOffset, velocity, 1, autoInversion, getVoicingStyle());
+    keyboardEngine.renderBlockStart (midi, noteLedger, finalShapes, octaveOffset, velocity, 1, autoInversion, getVoicingStyle(),
+                                     tonicPitchClass);
 
     // Sequencer: sync its tempo/loop settings from the parameters, apply
     // any pending stop-release or seek request, then let it advance and
@@ -554,6 +713,39 @@ void HomeChordsAudioProcessor::setStateInformation (const void* data, int sizeIn
 
             // Undo history refers to the progression that was just replaced.
             undoManager.clearUndoHistory();
+
+            // Sessions saved before Rhythm/Bass/Arp/Gate became global have no
+            // such parameters: adopt the first chord's style as the global one
+            // so opening the editor doesn't flatten the whole timeline to defaults.
+            bool hasGlobalStyle = false;
+            for (const auto& child : state)
+                if (child.getProperty ("id").toString() == "RHYTHM")
+                    hasGlobalStyle = true;
+
+            if (! hasGlobalStyle && ! progression.isEmpty())
+            {
+                const auto& first = progression.getEvent (0);
+                const auto nearest = [] (const auto& table, double value)
+                {
+                    int best = 0;
+                    for (size_t i = 1; i < table.size(); ++i)
+                        if (std::abs (table[i] - value) < std::abs (table[static_cast<size_t> (best)] - value))
+                            best = static_cast<int> (i);
+                    return best;
+                };
+
+                const auto setChoice = [this] (const char* id, int index)
+                {
+                    if (auto* param = dynamic_cast<juce::AudioParameterChoice*> (apvts.getParameter (id)))
+                        *param = index;
+                };
+
+                setChoice ("RHYTHM", static_cast<int> (first.rhythm));
+                setChoice ("BASS_MODE", juce::jmin (static_cast<int> (first.bassMode), progression::numBassChoices - 1));
+                setChoice ("ARP_MODE", static_cast<int> (first.arpMode));
+                setChoice ("ARP_RATE", nearest (progression::arpRateBeatsByChoice, first.arpRateBeats));
+                setChoice ("GATE", nearest (progression::gateByChoice, first.arpGate));
+            }
 
             const double loopStart = static_cast<double> (state.getProperty ("loopStartBeats", 0.0));
             const double loopEnd = static_cast<double> (state.getProperty ("loopEndBeats", 16.0));

@@ -11,6 +11,7 @@
 #include "Preview/PreviewSynth.h"
 #include "Progression/ProgressionModel.h"
 #include "Progression/ProgressionActions.h"
+#include "Progression/PlaybackSettings.h"
 #include "Timeline/SequencePlayer.h"
 
 // =============================================================================
@@ -25,11 +26,16 @@
 // is selected). A small internal preview synth makes the plugin audible
 // on its own.
 //
-// PLAY mode sounds a slot live; ADD mode (keyboard/MIDI only, not mouse --
-// see ChordKeyboardEngine) appends that slot's current chord to the end of
-// `progression`, which SequencePlayer plays back on its own internal
-// transport (Play/Stop/Loop) -- or, with SYNC_HOST on, in lockstep with the
-// host's transport. Every progression edit goes through `undoManager`.
+// Chord cards sound a slot live (keyboard, numpad, mouse, MIDI keyboard) and
+// are dragged onto the timeline to build `progression`, which SequencePlayer
+// plays back on its own internal transport (Play/Stop/Loop) -- or, with
+// SYNC_HOST on, in lockstep with the host's transport. Every progression edit
+// goes through `undoManager`.
+//
+// Rhythm / Bass / Arp mode / Arp rate / Gate are global (RHYTHM, BASS_MODE,
+// ARP_MODE, ARP_RATE, GATE): changing one stamps it on every chord of the
+// timeline, and new chords pick up the current values. A chord card can also
+// hold a borrowed/colour chord (SLOT<n>_COLOUR) in place of its diatonic one.
 //
 // Also here: voicing styles (Close/Open/Wide/Piano), humanize, borrowed/
 // colour chords, next-chord suggestions (UI-side, see PluginEditor), and
@@ -82,30 +88,42 @@ public:
 
     // ---- Called from the editor's message-thread key/mouse handling ----
 
-    // Computer keyboard: sounds the chord live, and (in ADD mode) counts
-    // as a trigger for the timeline. Slot index is 0-6 (first..last active
-    // slot for the current scale).
+    // Computer keyboard / numpad: sounds the chord live. Slot index is 0-6
+    // (first..last active slot for the current scale).
     void setChordSlotHeld (int slotIndex, bool held) noexcept { keyboardEngine.setSlotHeld (slotIndex, held); }
 
-    // Mouse: sounds the chord live, never triggers ADD mode.
+    // Mouse: sounds the chord live.
     void setChordSlotHeldFromMouse (int slotIndex, bool held) noexcept { keyboardEngine.setSlotHeldFromMouse (slotIndex, held); }
 
     // Drains the set of slots triggered (by keyboard or MIDI) since the
-    // last call -- what ADD mode acts on. Call once per UI tick regardless
-    // of whether ADD mode is currently on, so switching into ADD mode
-    // later doesn't replay stale triggers.
-    juce::uint32 consumeTriggeredSlotsForAddMode() noexcept { return keyboardEngine.consumeTriggeredSlots(); }
+    // last call -- the editor uses it to point the next-chord hints at
+    // whatever was just played.
+    juce::uint32 consumeTriggeredSlots() noexcept { return keyboardEngine.consumeTriggeredSlots(); }
 
-    // Appends slot's current effective chord (quality/extension override
-    // included) to the end of the progression, one bar long, through
-    // undoManager. Message thread only -- mutates progression/undoManager,
-    // neither of which is real-time safe.
+    // Builds a timeline event for a chord slot's current effective chord
+    // (colour / quality / extension overrides included), one bar long, with
+    // the global playback style stamped on. `startBeats` is left at 0 for
+    // the caller to position. Returns false for an inactive slot.
+    bool makeEventFromSlot (int slot, progression::ChordEvent& out) const;
+
+    // Appends slot's chord to the end of the progression through undoManager
+    // (double-clicking a chord card does this). Message thread only.
     void addChordFromSlotToTimeline (int slot);
 
-    // Appends a borrowed/colour chord (see MusicTheory/ColorChords.h) to the
-    // end of the progression, one bar long, through undoManager. Message
-    // thread only.
-    void addColorChordToTimeline (const musictheory::ColorChord& chord);
+    // The Rhythm/Bass/Arp/Gate currently chosen in the global controls.
+    progression::PlaybackSettings getPlaybackSettings() const;
+
+    // Stamps the current global playback settings onto every chord already
+    // on the timeline, as one undo step. Message thread only.
+    void applyPlaybackSettingsToTimeline();
+
+    // Replaces the whole timeline with `model` as one undo step, stamping the
+    // global playback settings on every chord and stretching the loop to
+    // cover it. Message thread only.
+    void replaceTimeline (const progression::ProgressionModel& model, const juce::String& undoName);
+
+    // Grows the loop's end (never shrinks it) so every chord is inside it.
+    void extendLoopToCoverProgression();
 
     // Colour chords for the current Key/Scale, spelled per NOTE_SPELLING.
     std::vector<musictheory::ColorChord> getCurrentColorChords() const;
@@ -142,11 +160,18 @@ public:
     // every other parameter here. -1 for quality means "no override, use
     // the diatonic quality"; Extension::None (0) means "no added tone".
 
+    // A slot can also hold a borrowed/colour chord (see ColorChords.h): the
+    // 0-based index into the current palette, or -1 for the plain diatonic
+    // chord. The root changes with it; quality/extension overrides, if set,
+    // still apply on top.
+    int getSlotColourIndex (int slot) const noexcept;
+    void setSlotColourIndex (int slot, int indexOrMinus1);
+
     int getSlotQualityOverride (int slot) const noexcept;
     musictheory::Extension getSlotExtensionOverride (int slot) const noexcept;
     void setSlotQualityOverride (int slot, int qualityOrMinus1);
     void setSlotExtensionOverride (int slot, musictheory::Extension extension);
-    void clearSlotOverride (int slot);
+    void clearSlotOverride (int slot);   // quality, extension and colour chord
 
     // ---- Sequencer transport (message thread) ---------------------------
     // These go through request flags consumed at the top of the next
@@ -170,11 +195,13 @@ private:
     // them below -- one place, so the two can never drift apart.
     static juce::String qualityParamId (int slot);
     static juce::String extensionParamId (int slot);
+    static juce::String colourParamId (int slot);
 
     // Computes the shape actually heard for one slot: the diatonic shape
     // with that slot's override (if any) applied. Real-time safe -- this
     // is the single place processBlock gets a slot's final shape from.
-    musictheory::RtChordShape effectiveShape (int slot, const musictheory::RtChordShape& diatonicShape) const noexcept;
+    musictheory::RtChordShape effectiveShape (int slot, const musictheory::RtChordShape& diatonicShape,
+                                              int tonicPitchClass, musictheory::ScaleType scale) const noexcept;
 
     midiengine::ChordKeyboardEngine keyboardEngine;
     midiengine::NoteLedger noteLedger;   // shared between live play and the sequencer -- see NoteLedger.h
@@ -192,6 +219,7 @@ private:
     // allocate) just to read one of these every block.
     std::array<std::atomic<float>*, musictheory::maxDiatonicSlots> qualityOverrideParams {};
     std::array<std::atomic<float>*, musictheory::maxDiatonicSlots> extensionOverrideParams {};
+    std::array<std::atomic<float>*, musictheory::maxDiatonicSlots> colourOverrideParams {};
 
     // Same idea for the parameters processBlock reads every block (a lookup
     // by string ID per block is avoidable work on the audio thread).

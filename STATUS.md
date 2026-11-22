@@ -132,14 +132,11 @@ look non-idiomatic on a few unusual combinations. See
   "Known scope limits" for why this isn't synced to host transport.
   `Timeline/TimelineComponent` (UI) + `Timeline/SequencePlayer` (the
   audio-thread engine that actually triggers notes).
-- **ADD mode**: a checkbox; pressing a keyboard or MIDI key (not a mouse
-  click — see `ChordKeyboardEngine`'s class comment) appends that slot's
-  current chord to the end of the timeline, one bar long, through the
-  undo manager.
+- **ADD mode** *(removed in v3 — chords are now dragged from the cards
+  onto the timeline; see the v3 section)*.
 - **Rhythm engine** (spec section 21), all 8 patterns: Sustained, Whole,
-  Half, Quarter, Eighth, Sixteenth, Strum, Arpeggio. A per-event
-  property, edited via a toolbar that appears under the timeline when a
-  block is selected.
+  Half, Quarter, Eighth, Sixteenth, Strum, Arpeggio. Stored per event but
+  set globally since v3 (the "All chords" row).
 - **Arpeggiator** (spec section 22): Up, Down, Up/Down, Random, with a
   selectable rate (1/4 to 1/32) — one of the rhythm patterns above,
   sharing its scheduling.
@@ -347,6 +344,64 @@ Added on top of the passing CI build:
 - **Not run here**: the GUI itself. The editor wiring, drag-out, file
   chooser, host sync against a real host, and tooltip/hint visuals are
   compile-checked only. Click through them and check the CI run.
+
+## v3 pass — redesign and new interaction model
+
+Requested after trying v2; all of it is in this build.
+
+- **Add mode removed.** Chords reach the timeline by **dragging a chord
+  card onto it** (drop position snapped, never overlapping another chord;
+  a ghost block previews the landing spot) or by double-clicking a card
+  or choosing "Add to timeline" from its menu.
+- **Right-click a chord card** now holds everything per-chord: Quality,
+  Extension, **Borrowed chord** (replaces the old Colour button — the card
+  itself becomes the borrowed chord, root and all) and Reset. A borrowed
+  chord persists per slot (`SLOT<n>_COLOUR` parameters), is played from the
+  audio thread through a real-time-safe lookup
+  (`colorChordShape`), and carries the card's roman numeral (bVII, V/V...).
+  The timeline's Quality/Extension toolbar is gone.
+- **Global Rhythm / Bass / Arp mode / Arp rate / Gate** (new APVTS params
+  `RHYTHM`, `BASS_MODE`, `ARP_MODE`, `ARP_RATE`, `GATE`). Changing one
+  stamps it on every chord of the timeline as one undo step; new chords
+  pick up the current values. Per-event fields still exist underneath, so
+  the sequencer and MIDI export are unchanged. Sessions saved before v3
+  adopt the first chord's style as the global one. "Custom" bass needs a
+  pitch, so the global Bass list is Root / Third / Fifth / Inversion.
+- **Timeline** rewritten and made short (about 85 px at the default
+  size): multi-select (shift/ctrl/cmd-click, rubber band, Ctrl/Cmd+A),
+  move/resize all selected, **drag out of the strip to delete**, copy /
+  cut / paste / duplicate / nudge, right-click menu, bar ruler following
+  the time signature, pixel scale frozen during drags, and a loop end that
+  grows to cover new chords.
+- **27 presets** in Pop, Jazz, Chill, Minor and Basics (jazz/chill ones
+  carry 7th / maj7 / add9 extensions; the 12-bar blues uses dominant 7ths),
+  shown only when they suit the current scale. A longer preset stretches the
+  loop so nothing is cut off.
+- **Compact UI**: 820 × 346 default (min 780 × 322, resizable), one-line
+  brand, smaller combo/button text, tools row, global playback row,
+  five-knob footer. Press **?** for the shortcut sheet.
+- **Input**: numpad 1-7 now plays chords (in the Numbers modes); Ctrl/Cmd/
+  Alt combos never sound chords; shortcuts for undo/redo, play/stop,
+  restart, loop, select all, copy/cut/paste, duplicate, delete, nudge,
+  octave. The **MIDI keyboard white keys C D E F G A B = chords 1-7** (any
+  octave) mapping was already in v2 and is unchanged.
+
+### v3 testing
+
+- 83 Catch2 cases / 35,033 assertions pass. New: preset library (valid in
+  every key/scale where offered, grouped, side filtering, jazz extensions),
+  real-time colour-chord lookup equals the display palette, global
+  playback settings, `findFreeStart`.
+- **A scripted GUI test** (built here against JUCE develop, run under
+  Xvfb, screenshots reviewed) drives the real editor: card drops (incl.
+  onto an occupied spot), borrowed chords and overrides, global style +
+  undo, rubber-band select, Ctrl+A, nudge, duplicate, drag-out delete,
+  Ctrl+Z / Delete via the keyboard, preset stretching the loop, and a
+  resize.
+- **Still not exercised here**: real OS drag-and-drop (the drop is invoked
+  directly), popup menus on screen, the DRAG MIDI external drag, file
+  chooser, host sync, and running inside an actual DAW. Check these in the
+  Standalone build and in your host.
 
 ## Testing performed
 

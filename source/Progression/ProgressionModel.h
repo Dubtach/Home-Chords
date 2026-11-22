@@ -67,6 +67,12 @@ namespace progression
 
         double getTotalLengthBeats() const noexcept;
 
+        // The earliest start at or after `desiredStart` where a chord of
+        // `length` beats would not overlap any existing chord (ignoring the
+        // ids in `ignore`, e.g. the chords being moved). Used when dropping
+        // a chord onto the timeline so it never lands on top of another.
+        double findFreeStart (double desiredStart, double length, const std::vector<juce::Uuid>& ignore = {}) const;
+
         juce::ValueTree toValueTree() const;
         static ProgressionModel fromValueTree (const juce::ValueTree& tree);
 

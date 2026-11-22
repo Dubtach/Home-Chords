@@ -28,10 +28,10 @@
 //    keyboard, mouse, external MIDI -- and OR'd together at render time, so
 //    releasing one can't release a chord another source is still holding.
 //    Mouse is kept separate from the "triggered" notification below because
-//    ADD mode appends a chord to the timeline on a keyboard/MIDI press but
-//    not on a mouse click (cards are clicked to preview or dragged to add).
+//    the editor's next-chord hints follow keyboard/MIDI presses, while a
+//    mouse press on a card may turn into a drag onto the timeline.
 //
-// 5. "Triggered" (for ADD mode) is detected at the moment each setter sees
+// 5. "Triggered" (for the next-chord hints) is detected at the moment each setter sees
 //    its own rising edge, not by comparing held-levels once per block --
 //    the latter would miss a press that's released again before the next
 //    block gets a chance to look.
@@ -50,10 +50,10 @@ namespace midiengine
 
         // ---- Message thread -------------------------------------------------
 
-        // Computer keyboard. Lock-free. Counts as an ADD-mode trigger.
+        // Computer keyboard / numpad. Lock-free. Counts as a trigger for the hints.
         void setSlotHeld (int slotIndex, bool held) noexcept;
 
-        // Mouse. Sounds the chord but never counts as an ADD-mode trigger.
+        // Mouse. Sounds the chord but never counts as a trigger.
         void setSlotHeldFromMouse (int slotIndex, bool held) noexcept;
 
         // Slots currently sounding, for the UI's highlight animation.
@@ -62,8 +62,8 @@ namespace midiengine
             return activeMaskForUi.load (std::memory_order_relaxed);
         }
 
-        // Slots pressed (by keyboard or MIDI) since the last call -- what
-        // ADD mode appends to the timeline. Never misses a quick tap.
+        // Slots pressed (by keyboard or MIDI) since the last call -- what the
+        // editor's next-chord hints follow. Never misses a quick tap.
         juce::uint32 consumeTriggeredSlots() noexcept
         {
             return triggeredMask.exchange (0, std::memory_order_relaxed);
@@ -90,7 +90,8 @@ namespace midiengine
         void renderBlockStart (juce::MidiBuffer& midiOut, NoteLedger& ledger,
                                 const musictheory::DiatonicShapeSet& currentShapes,
                                 int rootOctaveOffset, int velocity, int midiChannel, bool autoInversion,
-                                musictheory::VoicingStyle style = musictheory::VoicingStyle::Close) noexcept;
+                                musictheory::VoicingStyle style = musictheory::VoicingStyle::Close,
+                                int anchorPitchClassOverride = -1) noexcept;
 
         // Releases everything this engine is holding (not other emitters'
         // notes -- see NoteLedger), and forgets all held-key state.

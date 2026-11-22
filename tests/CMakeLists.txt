@@ -51,6 +51,7 @@ add_executable(Tests
     SequencePlayerTests.cpp
     MidiExportTests.cpp
     ColorAndSuggestionTests.cpp
+    GlobalsAndPresetsTests.cpp
 )
 
 target_include_directories(Tests PRIVATE ${CMAKE_SOURCE_DIR}/source)

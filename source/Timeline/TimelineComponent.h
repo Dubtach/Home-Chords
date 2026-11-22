@@ -6,90 +6,157 @@
 #include "../Shared/HomeSeriesUI.h"
 #include <JuceHeader.h>
 #include <functional>
+#include <vector>
 
 // =============================================================================
-// The progression timeline: a horizontal strip of chord blocks positioned
-// by beat, with a beat ruler, playhead, and loop-range shading. Drag a
-// block to move it, drag its right edge to resize it, click to select it
-// (which shows a small toolbar elsewhere in the editor for Rhythm/Bass/
-// Arp/Delete/Duplicate -- see PluginEditor). Every edit goes through the
-// supplied UndoManager via ProgressionActions.
+// The progression timeline: a short strip of chord blocks positioned by beat,
+// with a bar ruler, playhead and loop-range shading.
 //
-// No horizontal scrolling: the visible width is scaled to fit however
-// long the progression (or the loop range, whichever is longer) currently
-// is, rather than a fixed pixels-per-beat with a scrollbar. Simpler, and
-// fine for the progression lengths a songwriting sketch tool actually
-// produces; long progressions just render with narrower blocks.
+//   * Drop a chord card on it to add that chord where you let go (snapped,
+//     and never on top of another chord).
+//   * Click a block to select it; shift/ctrl/cmd-click adds to the selection;
+//     drag on empty space to rubber-band select several.
+//   * Drag the selection to move it; drag the right edge of a block to
+//     resize the whole selection; drag it out of the strip (above, below or
+//     off the side) and let go to delete it.
+//   * Right-click a block for Delete / Duplicate / Copy / Paste / Select all.
 //
-// Snap is configurable (setSnapBeats; the editor's Snap box drives it), and
-// chord labels follow the plugin's sharp/flat preference (setUseFlats).
+// Every edit is one UndoManager transaction per gesture. There is no
+// horizontal scrolling: the visible width is scaled to fit the progression (or
+// the loop range, whichever is longer); the scale is frozen while a drag is in
+// progress so blocks don't slide under the mouse.
+//
+// Rhythm / Bass / Arp / Gate are global (see PlaybackSettings.h), so the
+// blocks carry no per-chord controls -- just position, length and the chord.
 // =============================================================================
 
 namespace timeline
 {
-    class TimelineComponent : public juce::Component, private juce::Timer
+    class TimelineComponent : public juce::Component,
+                              public juce::DragAndDropTarget,
+                              private juce::Timer
     {
     public:
         TimelineComponent (progression::ProgressionModel& modelIn, SequencePlayer& playerIn, juce::UndoManager& undoManagerIn);
         ~TimelineComponent() override;
 
         void paint (juce::Graphics&) override;
-        void resized() override;
         void mouseDown (const juce::MouseEvent&) override;
         void mouseDrag (const juce::MouseEvent&) override;
         void mouseUp (const juce::MouseEvent&) override;
         void mouseMove (const juce::MouseEvent&) override;
 
-        // Called whenever the selected event changes (nullptr = nothing
-        // selected), so the host editor can show/hide the properties
-        // toolbar and populate it from the newly-selected event.
-        std::function<void (const juce::Uuid*)> onSelectionChanged;
+        // Chord cards dropped on the strip (description string "slot:<n>").
+        bool isInterestedInDragSource (const SourceDetails&) override;
+        void itemDragEnter (const SourceDetails&) override;
+        void itemDragMove (const SourceDetails&) override;
+        void itemDragExit (const SourceDetails&) override;
+        void itemDropped (const SourceDetails&) override;
 
-        juce::Uuid getSelectedId() const noexcept { return selectedId; }
+        // Supplied by the editor: builds the event for a chord card (slot).
+        std::function<bool (int slot, progression::ChordEvent& out)> makeEventFromSlot;
+
+        // Called whenever the selection changes.
+        std::function<void()> onSelectionChanged;
+
+        // ---- Selection & editing (the editor's shortcuts call these) ----
+        const std::vector<juce::Uuid>& getSelection() const noexcept { return selection; }
+        bool hasSelection() const noexcept { return ! selection.empty(); }
+        void selectAll();
+        void clearSelection();
         void deleteSelected();
         void duplicateSelected();
-        void updateSelected (const progression::ChordEvent& newState);   // for the toolbar to push Rhythm/Bass/Arp edits through
+        void nudgeSelected (double deltaBeats);
+        void copySelected();
+        void pasteAtEnd();
+        bool canPaste() const noexcept { return ! clipboard.empty(); }
+
+        // True while a drag (move / resize / marquee / card drop) is in progress.
+        bool isInteracting() const noexcept { return interacting; }
 
         // Grid that drags snap to, in beats (clamped to a sane minimum).
         void setSnapBeats (double beats) noexcept { snapBeats = juce::jmax (0.0625, beats); }
         double getSnapBeats() const noexcept { return snapBeats; }
 
+        // Beats per bar, for the ruler's bar lines and numbers.
+        void setBeatsPerBar (double beats) noexcept { beatsPerBar = juce::jmax (1.0, beats); }
+
         // Whether chord names spell black-key roots with flats (Bb) or sharps (A#).
         void setUseFlats (bool shouldUseFlats);
 
-        void refreshFromModel();   // call after any external model change (undo/redo, preset applied, ADD-mode append)
+        void refreshFromModel() { repaint(); }
+
+        static constexpr int idealHeight = 84;
 
     private:
+        struct DragItem
+        {
+            juce::Uuid id;
+            double startBeats = 0.0;
+            double lengthBeats = 0.0;
+        };
+
         double snapBeats = 0.25;
+        double beatsPerBar = 4.0;
         bool useFlats = false;
-        static constexpr float rulerHeight = 22.0f;
-        static constexpr float loopMarkerHeight = 10.0f;
+
+        static constexpr float rulerHeight = 14.0f;
+        static constexpr float loopMarkerHeight = 6.0f;
+        static constexpr float blockHeightMax = 140.0f;
 
         progression::ProgressionModel& model;
         SequencePlayer& player;
         juce::UndoManager& undoManager;
 
-        // NB: juce::Uuid() generates a fresh *random* id; "nothing" is
-        // Uuid::null(). Mixing the two up leaves a phantom selection.
-        juce::Uuid selectedId = juce::Uuid::null();
-        juce::Uuid dragEventId = juce::Uuid::null();
+        // NB: juce::Uuid() generates a fresh *random* id; "nothing" is Uuid::null().
+        std::vector<juce::Uuid> selection;
+        std::vector<progression::ChordEvent> clipboard;
+
         juce::uint32 lastSeenModelRevision = 0;
+        bool interacting = false;
+
+        // Block drag state.
+        std::vector<DragItem> dragItems;
         bool draggingBody = false;
         bool draggingRightEdge = false;
+        bool dragOutside = false;
+        double dragDeltaBeats = 0.0;
+        int dragStartMouseX = 0;
+        double scaleLockBeats = 0.0;   // > 0: freeze the pixel scale during a drag
+
+        // Loop handle drag state.
         bool draggingLoopStart = false;
         bool draggingLoopEnd = false;
-        double dragStartBeats = 0.0;
-        double dragStartLength = 0.0;
-        int dragStartMouseX = 0;
+
+        // Rubber band.
+        bool marqueeActive = false;
+        bool marqueeMoved = false;
+        juce::Point<int> marqueeStart;
+        juce::Rectangle<int> marqueeRect;
+        std::vector<juce::Uuid> selectionBeforeMarquee;
+
+        // Card-drop preview.
+        double dropBeat = -1.0;
+        double dropLength = 4.0;
 
         double totalTimelineBeats() const noexcept;
         float pixelsPerBeat() const noexcept;
         double xToBeats (int x) const noexcept;
         int beatsToX (double beats) const noexcept;
         double snap (double beats) const noexcept;
+        double snapDelta (double beats) const noexcept;
+        bool isOutside (juce::Point<int> p) const noexcept;
 
         juce::Rectangle<float> blockBoundsFor (const progression::ChordEvent& event) const noexcept;
         const progression::ChordEvent* eventAt (int x, int y, bool* onRightEdge) const noexcept;
+
+        bool isSelected (const juce::Uuid& id) const noexcept;
+        void setSelection (std::vector<juce::Uuid> newSelection);
+        void toggleInSelection (const juce::Uuid& id);
+        void finishBlockDrag();
+        void showContextMenu (const juce::MouseEvent&);
+        void addSlotEvent (int slot, double desiredStart);
+        static int slotFromDescription (const juce::var& description);
 
         void timerCallback() override;   // repaints for the moving playhead, and when the model changed underneath us
 
