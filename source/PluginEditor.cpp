@@ -671,7 +671,7 @@ void HomeChordsAudioProcessorEditor::showChordMenu (int slot)
     static const char* const qualityNames[] = { "Major", "Minor", "Diminished", "Augmented", "Sus2", "Sus4" };
     static const char* const extensionNames[] = { "None", "6th", "7th", "Major 7th", "Add 9" };
 
-    constexpr int qualityBase = 100, extensionBase = 200, borrowedBase = 300, resetId = 400, appendId = 500;
+    static constexpr int qualityBase = 100, extensionBase = 200, borrowedBase = 300, resetId = 400, appendId = 500;
 
     juce::PopupMenu qualityMenu;
     qualityMenu.addItem (qualityBase, "Default", true, currentQuality < 0);
@@ -872,11 +872,11 @@ void HomeChordsAudioProcessorEditor::exportMidiWithDialog()
                                                            .getChildFile (fileName + ".mid"),
                                                        "*.mid;*.midi");
 
-    const auto flags = juce::FileBrowserComponent::saveMode
+    const auto chooserFlags = juce::FileBrowserComponent::saveMode
                      | juce::FileBrowserComponent::canSelectFiles
                      | juce::FileBrowserComponent::warnAboutOverwriting;
 
-    fileChooser->launchAsync (flags, [safe = juce::Component::SafePointer<HomeChordsAudioProcessorEditor> (this)]
+    fileChooser->launchAsync (chooserFlags, [safe = juce::Component::SafePointer<HomeChordsAudioProcessorEditor> (this)]
                                       (const juce::FileChooser& chooser)
     {
         if (safe == nullptr)

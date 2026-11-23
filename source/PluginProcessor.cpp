@@ -611,9 +611,9 @@ void HomeChordsAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         // The host owns the clock, tempo and looping in this mode.
         timeline::SequencePlayer::HostTransport transport;
 
-        if (auto* playHead = getPlayHead())
+        if (auto* hostPlayHead = getPlayHead())
         {
-            if (const auto position = playHead->getPosition())
+            if (const auto position = hostPlayHead->getPosition())
             {
                 if (const auto ppq = position->getPpqPosition())
                 {
