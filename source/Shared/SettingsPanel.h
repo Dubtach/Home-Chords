@@ -19,9 +19,9 @@ namespace homeUI
     class SettingsPanel : public juce::Component
     {
     public:
-        SettingsPanel (int currentKeyboardMode, int currentNoteSpelling)
+        SettingsPanel (int currentKeyboardMode, int currentNoteSpelling, bool hintsOn)
         {
-            setSize (240, 132);
+            setSize (240, 176);
 
             static const juce::StringArray keyboardLabels { "Letters", "Numbers", "Both" };
             buildRow (keyboardButtons, keyboardLabels, currentKeyboardMode,
@@ -30,10 +30,15 @@ namespace homeUI
             static const juce::StringArray spellingLabels { "Auto", "Sharps", "Flats" };
             buildRow (spellingButtons, spellingLabels, currentNoteSpelling,
                       [this] (int index) { if (onNoteSpellingChosen != nullptr) onNoteSpellingChosen (index); });
+
+            static const juce::StringArray hintLabels { "On", "Off" };
+            buildRow (hintButtons, hintLabels, hintsOn ? 0 : 1,
+                      [this] (int index) { if (onHintsChosen != nullptr) onHintsChosen (index == 0); });
         }
 
         std::function<void (int)> onKeyboardModeChosen;
         std::function<void (int)> onNoteSpellingChosen;
+        std::function<void (bool)> onHintsChosen;
 
         void resized() override
         {
@@ -44,6 +49,9 @@ namespace homeUI
 
             area.removeFromTop (18);   // "NOTE SPELLING" label
             layoutRow (spellingButtons, area.removeFromTop (26));
+
+            area.removeFromTop (18);   // "NEXT-CHORD HINTS" label
+            layoutRow (hintButtons, area.removeFromTop (26));
         }
 
         void paint (juce::Graphics& g) override
@@ -57,6 +65,9 @@ namespace homeUI
 
             area.removeFromTop (26.0f + 18.0f);
             drawCardText (g, "NOTE SPELLING", area.removeFromTop (16.0f), 9.5f, juce::Justification::centredLeft, 0.7f);
+
+            area.removeFromTop (26.0f + 18.0f);
+            drawCardText (g, "NEXT-CHORD HINTS", area.removeFromTop (16.0f), 9.5f, juce::Justification::centredLeft, 0.7f);
         }
 
     private:
@@ -120,7 +131,7 @@ namespace homeUI
                 row[static_cast<size_t> (i)]->setBounds (area.getX() + i * width, area.getY(), width - 4, area.getHeight());
         }
 
-        std::vector<std::unique_ptr<ToggleButton>> keyboardButtons, spellingButtons;
+        std::vector<std::unique_ptr<ToggleButton>> keyboardButtons, spellingButtons, hintButtons;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SettingsPanel)
     };

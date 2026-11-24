@@ -22,7 +22,8 @@
 //     to resize the whole selection (later chords shift to follow); drag it out
 //     of the strip (above, below or off the side) and let go to delete it --
 //     the gap closes up.
-//   * Right-click a block for Delete / Duplicate / Copy / Paste / Select all.
+//   * Right-click anywhere for Grid snap (the snap resolution lives here, not
+//     in the toolbar) plus Delete / Duplicate / Copy / Paste / Select all.
 //
 // Drags are previewed without touching the model and applied as one undo step
 // when released. There is no horizontal scrolling: the visible width is scaled
@@ -89,14 +90,25 @@ namespace timeline
 
         void refreshFromModel() { repaint(); }
 
-        static constexpr int idealHeight = 84;
+        // The snap choices shown under right-click > Grid snap (supplied by the
+        // editor, which owns the SNAP parameter), the index currently in force,
+        // and what to call when one is picked.
+        juce::StringArray snapChoiceNames;
+        std::function<int()> getSnapChoice;
+        std::function<void (int)> onSnapChoice;
+
+        // The top-right corner of the ruler is kept clear for the editor's
+        // time-signature chip.
+        static constexpr int cornerWidth = 68;
+
+        static constexpr int idealHeight = 130;
 
     private:
         double snapBeats = 0.25;
         double beatsPerBar = 4.0;
         bool useFlats = false;
 
-        static constexpr float rulerHeight = 14.0f;
+        static constexpr float rulerHeight = 18.0f;
         static constexpr float loopMarkerHeight = 6.0f;
         static constexpr float blockHeightMax = 140.0f;
 

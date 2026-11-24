@@ -342,6 +342,52 @@ namespace homeUI
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Knob)
     };
 
+    // The little "metronome + 4/4" pill that sits in the timeline's corner.
+    // Click it (the editor shows the menu) to change the time signature.
+    class TimeSigChip : public juce::Button
+    {
+    public:
+        TimeSigChip() : juce::Button ("TimeSig") {}
+
+        void setLabel (const juce::String& newLabel)
+        {
+            if (label != newLabel)
+            {
+                label = newLabel;
+                repaint();
+            }
+        }
+
+        void paintButton (juce::Graphics& g, bool over, bool down) override
+        {
+            auto bounds = getLocalBounds().toFloat().reduced (0.5f);
+
+            g.setColour (juce::Colour (0xff101014).withAlpha (0.95f));
+            g.fillRoundedRectangle (bounds, bounds.getHeight() * 0.5f);
+            g.setColour (cyan.withAlpha (down ? 1.0f : (over ? 0.9f : 0.55f)));
+            g.drawRoundedRectangle (bounds, bounds.getHeight() * 0.5f, 1.0f);
+
+            // Metronome: a trapezoid body, a swinging arm and a weight.
+            auto icon = bounds.removeFromLeft (bounds.getHeight()).reduced (4.5f, 3.0f);
+            juce::Path body;
+            body.startNewSubPath (icon.getCentreX() - icon.getWidth() * 0.22f, icon.getY());
+            body.lineTo (icon.getCentreX() + icon.getWidth() * 0.22f, icon.getY());
+            body.lineTo (icon.getRight(), icon.getBottom());
+            body.lineTo (icon.getX(), icon.getBottom());
+            body.closeSubPath();
+            g.setColour (juce::Colours::white.withAlpha (0.85f));
+            g.strokePath (body, juce::PathStrokeType (1.2f, juce::PathStrokeType::curved));
+            g.drawLine (icon.getCentreX(), icon.getBottom() - 1.5f, icon.getCentreX() + icon.getWidth() * 0.22f, icon.getY() + 1.5f, 1.2f);
+
+            g.setFont (font (10.5f, true));
+            g.setColour (juce::Colours::white);
+            g.drawText (label, bounds.withTrimmedRight (3.0f), juce::Justification::centred, false);
+        }
+
+    private:
+        juce::String label { "4/4" };
+    };
+
     // A small labelled on/off tile -- a tick on a dark square when on,
     // empty when off, with a text label (set via setButtonText()) to its
     // right. Used for Auto Inversion; general-purpose beyond that.

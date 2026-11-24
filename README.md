@@ -99,14 +99,19 @@ tests/                    Catch2 unit tests.
   scope uses the Arpeggio rhythm. New chords pick up the last global choice.
 - **Play / Restart / Loop** — the timeline's own transport (Tempo knob).
   **Host sync** follows the host's transport and position instead.
-- **Snap / Voicing / Time signature** — grid, chord spread, bar length.
+- **Time signature** — the metronome chip in the timeline's top-right corner.
+  **Grid snap** — right-click the timeline > Grid snap (faint lines show the
+  current grid on the ruler).
+- **Voicing group (footer)** — Spread (Close/Open/Wide/Piano), Bass note and
+  Smooth voicing sit together, since all three shape how a chord is voiced.
+  (Bass follows the same selection-or-all rule as Rhythm.)
 - **Presets** — 27 progressions in Pop, Jazz, Chill, Minor and Basics,
   filtered to the ones that suit the current scale.
 - **Export / DRAG MIDI** — save the timeline as a .mid, or drag it into a DAW track.
 - **Hints** — dashed outlines mark likely next chords; "NEXT" is the top
-  pick, hover for the reason.
+  pick, hover for the reason. Turn them off in Settings ("...").
 - **Humanize / Velocity / Tempo / Preview / Octave / Smooth voicing** — footer.
-- **Settings ("...")** — keyboard input mode and note spelling.
+- **Settings ("...")** — keyboard input mode, note spelling, next-chord hints.
 - **Shortcuts** (press **?**): Space play/stop, Home restart, L loop,
   Ctrl/Cmd+Z undo, +Shift+Z or Y redo (there are no undo buttons), +A select
   all, +C/X/V copy/cut/paste, +D duplicate, Delete remove, Left/Right move

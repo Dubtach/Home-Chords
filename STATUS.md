@@ -432,6 +432,18 @@ Requested after trying v2; all of it is in this build.
 - **Still not exercised here:** real OS drag-and-drop, on-screen popup
   menus, DRAG MIDI external drag, host sync, a real DAW, MSVC build.
 
+## v5 pass — layout tidy
+
+- Time signature moved into a metronome chip in the timeline's top-right
+  corner (the ruler leaves that corner clear). Grid snap moved to the
+  timeline's right-click menu. The hidden combo boxes still own the
+  TIME_SIG / SNAP parameters through their attachments.
+- Ruler: bold bar numbers, beat ticks with beat numbers when there is room,
+  faint snap-grid lines, bar lines through the grid.
+- Default window height raised to 402 (min 362) so the timeline blocks are
+  tall enough; footer is 74 px with Spread / Bass / Smooth voicing grouped.
+- Hints toggle moved to the settings panel.
+
 ## Testing performed
 
 **Read this before trusting anything new in this pass.** (This section is the

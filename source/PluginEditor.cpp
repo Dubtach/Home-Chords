@@ -81,7 +81,7 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
     }
 
     snapBox.addItemList ({ "1/16", "1/8", "1/4", "1/2", "Bar" }, 1);
-    voicingBox.addItemList ({ "Close", "Open", "Wide", "Piano" }, 1);
+    voicingBox.addItemList ({ "Spread: Close", "Spread: Open", "Spread: Wide", "Spread: Piano" }, 1);
     keyBox.addItemList (musictheory::getAllKeyNames(), 1);
     scaleBox.addItemList (musictheory::getAllScaleNames(), 1);
     timeSigBox.addItemList ({ "4/4", "3/4", "6/8" }, 1);
@@ -96,17 +96,30 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
     voicingBox.setTooltip ("How chords are spread: Close, Open (drop-2), Wide (open + low root), Piano (low root + close chord)");
     timeSigBox.setTooltip ("Time signature (sets the bar length)");
     rhythmBox.setTooltip ("Rhythm: the selected chords, or every chord when none is selected");
-    bassBox.setTooltip ("Bass note: the selected chords, or every chord when none is selected");
+    bassBox.setTooltip ("Bass note: the selected chords, or every chord when none is selected. Together with Spread and Smooth voicing it shapes how a chord is voiced");
     arpModeBox.setTooltip ("Arpeggio direction (selected chords, or all)");
     arpRateBox.setTooltip ("Arpeggio speed (selected chords, or all)");
     gateBox.setTooltip ("Arpeggio gate: how much of each step is held (selected chords, or all)");
 
-    for (auto* box : { &keyBox, &scaleBox, &timeSigBox, &snapBox, &voicingBox,
+    // timeSigBox, snapBox and hintsCheckbox are never shown: they just hold
+    // their parameters (via the attachments). The time signature is edited from
+    // the corner chip, the grid from the timeline's right-click menu, and
+    // hints from the settings panel.
+    for (auto* box : { &keyBox, &scaleBox, &voicingBox,
                        &rhythmBox, &bassBox, &arpModeBox, &arpRateBox, &gateBox })
     {
         styleComboBox (*box);
         addAndMakeVisible (*box);
     }
+
+    addAndMakeVisible (timeSigChip);
+    timeSigChip.setTooltip ("Time signature (sets the bar length)");
+    timeSigChip.onClick = [this] { showTimeSigMenu(); };
+    timeSigBox.onChange = [this] { timeSigChip.setLabel (timeSigBox.getText()); };
+
+    timelineComponent.snapChoiceNames = { "1/16", "1/8", "1/4", "1/2", "Bar" };
+    timelineComponent.getSnapChoice = [this] { return snapBox.getSelectedItemIndex(); };
+    timelineComponent.onSnapChoice  = [this] (int index) { snapBox.setSelectedItemIndex (index, juce::sendNotificationSync); };
 
     addAndMakeVisible (octaveDownButton);
     addAndMakeVisible (octaveUpButton);
@@ -116,13 +129,11 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
     autoInversionCheckbox.setButtonText ("SMOOTH VOICING");
     loopCheckbox.setButtonText ("LOOP");
     syncCheckbox.setButtonText ("HOST SYNC");
-    hintsCheckbox.setButtonText ("HINTS");
     autoInversionCheckbox.setTooltip ("Voice-lead: each new chord picks the inversion closest to the last one");
     syncCheckbox.setTooltip ("Follow the host: play/stop, position and tempo come from your DAW");
-    hintsCheckbox.setTooltip ("Outline the chords that commonly follow the last one");
     loopCheckbox.setTooltip ("Loop the timeline (L)");
 
-    for (auto* box : { &autoInversionCheckbox, &loopCheckbox, &syncCheckbox, &hintsCheckbox })
+    for (auto* box : { &autoInversionCheckbox, &loopCheckbox, &syncCheckbox })
         addAndMakeVisible (*box);
 
     for (auto* knob : { &velocityKnob, &tempoKnob, &previewKnob, &humanizeTimeKnob, &humanizeVelKnob })
@@ -201,6 +212,8 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
     processor.apvts.addParameterListener ("SCALE", this);
     processor.apvts.addParameterListener ("NOTE_SPELLING", this);
 
+    timeSigChip.setLabel (timeSigBox.getText());
+    timeSigChip.toFront (false);   // above the timeline it overlaps
     refreshChordCards();
     refreshPlaybackControls();
 
@@ -237,7 +250,7 @@ void HomeChordsAudioProcessorEditor::resized()
     area.removeFromTop (5);
     auto toolsRow = area.removeFromTop (24);
     area.removeFromTop (5);
-    auto footer = area.removeFromBottom (64);
+    auto footer = area.removeFromBottom (74);
     area.removeFromBottom (5);
     auto playbackRow = area.removeFromBottom (22);
     area.removeFromBottom (5);
@@ -286,19 +299,17 @@ void HomeChordsAudioProcessorEditor::resized()
         put (left, restartButton, 28, 8);
         put (left, loopCheckbox, 58, 6);
         put (left, syncCheckbox, 92, 8);
-        put (left, timeSigBox, 54);
-        put (left, snapBox, 58, 8);
         put (left, presetsButton, 66, 4);
-        put (left, voicingBox, 76);
     }
 
     // ---- timeline ----
     timelineComponent.setBounds (timelineArea);
+    timeSigChip.setBounds (timelineArea.getRight() - timelineComponent.cornerWidth - 4, timelineArea.getY() + 3,
+                           timelineComponent.cornerWidth, 20);
 
-    // ---- playback row: label | rhythm | bass | arp | rate | gate ----
+    // ---- playback row: label | rhythm | arp | rate | gate ----
     playbackLabelBounds = playbackRow.removeFromLeft (94).toFloat();
     put (playbackRow, rhythmBox, 104);
-    put (playbackRow, bassBox, 118);
     put (playbackRow, arpModeBox, 112);
     put (playbackRow, arpRateBox, 58);
     put (playbackRow, gateBox, 94);
@@ -318,11 +329,15 @@ void HomeChordsAudioProcessorEditor::resized()
 
     footerContent.removeFromLeft (14);
 
-    auto checkArea = footerContent.removeFromLeft (122);
-    autoInversionCheckbox.setBounds (checkArea.removeFromTop (checkArea.getHeight() / 2));
-    hintsCheckbox.setBounds (checkArea);
+    // Voicing group: how the notes are arranged -- spread, bass note, smoothing.
+    auto voicingArea = footerContent.removeFromLeft (124);
+    voicingBox.setBounds (voicingArea.removeFromTop (20));
+    voicingArea.removeFromTop (1);
+    bassBox.setBounds (voicingArea.removeFromTop (20));
+    voicingArea.removeFromTop (1);
+    autoInversionCheckbox.setBounds (voicingArea.removeFromTop (20));
 
-    footerContent.removeFromLeft (8);
+    footerContent.removeFromLeft (10);
 
     const int knobWidth = footerContent.getWidth() / 5;
     velocityKnob.setBounds (footerContent.removeFromLeft (knobWidth).reduced (4, 0));
@@ -891,12 +906,27 @@ void HomeChordsAudioProcessorEditor::showHelpPanel()
     juce::CallOutBox::launchAsynchronously (std::make_unique<homeUI::HelpPanel>(), helpButton.getScreenBounds(), nullptr);
 }
 
+void HomeChordsAudioProcessorEditor::showTimeSigMenu()
+{
+    juce::PopupMenu menu;
+
+    for (int i = 0; i < timeSigBox.getNumItems(); ++i)
+        menu.addItem (i + 1, timeSigBox.getItemText (i), true, i == timeSigBox.getSelectedItemIndex());
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&timeSigChip),
+                        [safe = juce::Component::SafePointer<HomeChordsAudioProcessorEditor> (this)] (int result)
+    {
+        if (safe != nullptr && result > 0)
+            safe->timeSigBox.setSelectedItemIndex (result - 1, juce::sendNotificationSync);
+    });
+}
+
 void HomeChordsAudioProcessorEditor::showSettingsPanel()
 {
     const auto keyboardMode = static_cast<int> (processor.apvts.getRawParameterValue ("KEYBOARD_MODE")->load());
     const auto noteSpelling = static_cast<int> (processor.apvts.getRawParameterValue ("NOTE_SPELLING")->load());
 
-    auto panel = std::make_unique<homeUI::SettingsPanel> (keyboardMode, noteSpelling);
+    auto panel = std::make_unique<homeUI::SettingsPanel> (keyboardMode, noteSpelling, hintsCheckbox.getToggleState());
 
     panel->onKeyboardModeChosen = [this] (int index)
     {
@@ -910,6 +940,11 @@ void HomeChordsAudioProcessorEditor::showSettingsPanel()
         if (auto* param = dynamic_cast<juce::AudioParameterChoice*> (processor.apvts.getParameter ("NOTE_SPELLING")))
             *param = index;
         refreshChordCards();
+    };
+
+    panel->onHintsChosen = [this] (bool on)
+    {
+        hintsCheckbox.setToggleState (on, juce::sendNotificationSync);   // writes the HINTS parameter
     };
 
     const auto targetBounds = settingsButton.getScreenBounds();

@@ -35,9 +35,9 @@ class HomeChordsAudioProcessorEditor : public juce::AudioProcessorEditor,
 {
 public:
     static constexpr int defaultWidth = 820;
-    static constexpr int defaultHeight = 346;
+    static constexpr int defaultHeight = 402;
     static constexpr int minWidth = 780;
-    static constexpr int minHeight = 322;
+    static constexpr int minHeight = 362;
 
     explicit HomeChordsAudioProcessorEditor (HomeChordsAudioProcessor&);
     ~HomeChordsAudioProcessorEditor() override;
@@ -72,6 +72,7 @@ private:
     homeUI::Knob humanizeTimeKnob { "HUMANIZE", homeUI::purple };
     homeUI::Knob humanizeVelKnob  { "VEL VAR", homeUI::purple };
 
+    homeUI::TimeSigChip timeSigChip;   // sits in the timeline's corner; timeSigBox (hidden) holds the parameter
     juce::TextButton settingsButton { "..." };
     juce::TextButton helpButton { "?" };
     juce::TextButton playStopButton { "Play" };
@@ -118,6 +119,7 @@ private:
 
     void showChordMenu (int slot);
     void startCardDrag (int slot);
+    void showTimeSigMenu();
     void showPresetMenu();
     void applyPreset (int presetIndex);
     void showSettingsPanel();

@@ -152,17 +152,65 @@ namespace timeline
         const float bottom = static_cast<float> (getHeight());
         const float gridTop = rulerHeight + loopMarkerHeight;
 
-        // Bar lines and numbers follow the plugin's time signature.
-        for (int bar = 0; static_cast<double> (bar) * beatsPerBar < totalBeats; ++bar)
-        {
-            const auto x = static_cast<float> (beatsToX (static_cast<double> (bar) * beatsPerBar));
-            g.setColour (juce::Colours::white.withAlpha (bar % 4 == 0 ? 0.28f : 0.13f));
-            g.drawLine (x, gridTop, x, bottom, bar % 4 == 0 ? 1.2f : 0.7f);
+        // ---- ruler and grid: bar numbers, beat ticks, snap lines ----
+        const float ppb = pixelsPerBeat();
+        const float width = static_cast<float> (getWidth());
+        const float numberLimit = width - static_cast<float> (cornerWidth) - 8.0f;   // keep clear of the time-signature chip
 
-            g.setFont (homeUI::font (8.5f, false));
-            g.setColour (juce::Colours::white.withAlpha (0.55f));
-            g.drawText (juce::String (bar + 1), juce::Rectangle<float> (x + 3.0f, loopMarkerHeight, 30.0f, rulerHeight),
-                        juce::Justification::centredLeft, false);
+        g.setColour (juce::Colours::white.withAlpha (0.04f));
+        g.fillRect (juce::Rectangle<float> (0.0f, loopMarkerHeight, width, rulerHeight));
+
+        // Snap grid: faint lines at the current resolution (only if they'd be
+        // far enough apart to read).
+        if (static_cast<float> (snapBeats) * ppb >= 7.0f)
+        {
+            g.setColour (juce::Colours::white.withAlpha (0.045f));
+
+            for (double b = snapBeats; b < totalBeats; b += snapBeats)
+            {
+                const auto x = static_cast<float> (beatsToX (b));
+                g.drawLine (x, gridTop, x, bottom, 0.6f);
+            }
+        }
+
+        for (int beat = 0; static_cast<double> (beat) < totalBeats; ++beat)
+        {
+            const auto x = static_cast<float> (beatsToX (static_cast<double> (beat)));
+            const double inBar = std::fmod (static_cast<double> (beat), beatsPerBar);
+            const bool isBar = inBar < 1.0e-6;
+            const int barNumber = static_cast<int> (static_cast<double> (beat) / beatsPerBar + 1.0e-6) + 1;
+
+            if (isBar)
+            {
+                g.setColour (juce::Colours::white.withAlpha (barNumber % 4 == 1 ? 0.30f : 0.18f));
+                g.drawLine (x, loopMarkerHeight, x, bottom, barNumber % 4 == 1 ? 1.3f : 1.0f);
+
+                if (x + 18.0f < numberLimit)
+                {
+                    g.setFont (homeUI::font (11.0f, true));
+                    g.setColour (juce::Colours::white.withAlpha (0.92f));
+                    g.drawText (juce::String (barNumber), juce::Rectangle<float> (x + 4.0f, loopMarkerHeight, 26.0f, rulerHeight),
+                                juce::Justification::centredLeft, false);
+                }
+            }
+            else
+            {
+                g.setColour (juce::Colours::white.withAlpha (0.07f));
+                g.drawLine (x, gridTop, x, bottom, 0.7f);
+
+                g.setColour (juce::Colours::white.withAlpha (0.32f));
+                g.drawLine (x, gridTop - 5.0f, x, gridTop, 1.0f);
+
+                // Beat numbers (2, 3, 4 ...) once there's room for them.
+                if (ppb >= 26.0f && x + 12.0f < numberLimit)
+                {
+                    g.setFont (homeUI::font (8.5f, false));
+                    g.setColour (juce::Colours::white.withAlpha (0.42f));
+                    g.drawText (juce::String (static_cast<int> (inBar + 1.5)),
+                                juce::Rectangle<float> (x + 3.0f, loopMarkerHeight, 16.0f, rulerHeight),
+                                juce::Justification::centredLeft, false);
+                }
+            }
         }
 
         // Loop region: always exactly the chords, so it is shaded, not draggable.
@@ -447,6 +495,19 @@ namespace timeline
             setSelection ({ foundId });
 
         juce::PopupMenu menu;
+
+        if (snapChoiceNames.size() > 0)
+        {
+            const int current = getSnapChoice != nullptr ? getSnapChoice() : -1;
+            juce::PopupMenu grid;
+
+            for (int i = 0; i < snapChoiceNames.size(); ++i)
+                grid.addItem (100 + i, snapChoiceNames[i], true, i == current);
+
+            menu.addSubMenu ("Grid snap", grid);
+            menu.addSeparator();
+        }
+
         menu.addItem (1, "Delete", hasSelection());
         menu.addItem (2, "Duplicate", hasSelection());
         menu.addItem (3, "Copy", hasSelection());
@@ -468,7 +529,10 @@ namespace timeline
                 case 3: safe->copySelected();      break;
                 case 4: safe->pasteAtEnd();        break;
                 case 5: safe->selectAll();         break;
-                default: break;
+                default:
+                    if (result >= 100 && safe->onSnapChoice != nullptr)
+                        safe->onSnapChoice (result - 100);
+                    break;
             }
         });
     }
