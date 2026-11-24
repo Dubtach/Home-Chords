@@ -74,6 +74,7 @@ target_sources(Tests PRIVATE
     ${CMAKE_SOURCE_DIR}/source/Midi/ChordKeyboardEngine.cpp
     ${CMAKE_SOURCE_DIR}/source/Midi/MidiExport.cpp
     ${CMAKE_SOURCE_DIR}/source/Timeline/SequencePlayer.cpp
+    ${CMAKE_SOURCE_DIR}/source/Preview/PreviewSynth.cpp
 )
 
 target_link_libraries(Tests PRIVATE
@@ -82,6 +83,7 @@ target_link_libraries(Tests PRIVATE
     juce::juce_audio_basics
     juce::juce_data_structures
     juce::juce_gui_basics
+    juce::juce_dsp
 )
 
 target_compile_features(Tests PRIVATE cxx_std_20)
