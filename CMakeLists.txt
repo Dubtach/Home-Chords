@@ -82,8 +82,6 @@ target_sources("${PROJECT_NAME}" PRIVATE
     source/Timeline/TimelineComponent.cpp
 
     source/Shared/HomeSeriesUI.h
-    source/Shared/HelpPanel.h
-    source/Shared/SettingsPanel.h
     source/Shared/MidiDragTile.h
 )
 

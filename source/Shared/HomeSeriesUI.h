@@ -652,6 +652,54 @@ namespace homeUI
 
     // Smaller, lighter text for combo boxes, text buttons and popup menus so
     // the compact layout doesn't look cramped.
+    // A combo box drawn as `<  value  >`: click an arrow to step to the
+    // previous / next item (wrapping round), click the value to open the list.
+    // It is a real juce::ComboBox, so attachments, onChange and the mouse
+    // wheel all work as usual; CompactLookAndFeel does the drawing.
+    class StepperBox : public juce::ComboBox
+    {
+    public:
+        static constexpr int arrowZone = 20;
+
+        enum class Zone { left, middle, right };
+
+        Zone zoneAt (int x) const noexcept
+        {
+            return x < arrowZone ? Zone::left : (x >= getWidth() - arrowZone ? Zone::right : Zone::middle);
+        }
+
+        void step (int delta)
+        {
+            const int count = getNumItems();
+
+            if (count <= 0)
+                return;
+
+            int index = getSelectedItemIndex();
+
+            if (index < 0)   // "Mixed" / nothing chosen yet: stepping goes to the first or last
+                index = delta > 0 ? -1 : count;
+
+            setSelectedItemIndex ((index + delta + count) % count, juce::sendNotificationSync);
+        }
+
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            if (! isEnabled() || e.mods.isPopupMenu())
+                return;
+
+            switch (zoneAt (e.x))
+            {
+                case Zone::left:   step (-1); break;
+                case Zone::right:  step (1);  break;
+                case Zone::middle: showPopup(); break;
+            }
+        }
+
+        void mouseMove (const juce::MouseEvent& e) override { juce::ComboBox::mouseMove (e); repaint(); }
+        void mouseExit (const juce::MouseEvent& e) override { juce::ComboBox::mouseExit (e); repaint(); }
+    };
+
     class CompactLookAndFeel : public juce::LookAndFeel_V4
     {
     public:
@@ -666,5 +714,63 @@ namespace homeUI
         }
 
         juce::Font getPopupMenuFont() override { return homeUI::font (13.0f, false); }
+
+        void drawComboBox (juce::Graphics& g, int width, int height, bool isButtonDown,
+                           int bx, int by, int bw, int bh, juce::ComboBox& box) override
+        {
+            auto* stepper = dynamic_cast<StepperBox*> (&box);
+
+            if (stepper == nullptr)
+            {
+                juce::LookAndFeel_V4::drawComboBox (g, width, height, isButtonDown, bx, by, bw, bh, box);
+                return;
+            }
+
+            const auto bounds = juce::Rectangle<float> (0.0f, 0.0f, static_cast<float> (width), static_cast<float> (height));
+            g.setColour (box.findColour (juce::ComboBox::backgroundColourId));
+            g.fillRoundedRectangle (bounds, 4.0f);
+            g.setColour (box.findColour (juce::ComboBox::outlineColourId));
+            g.drawRoundedRectangle (bounds.reduced (0.5f), 4.0f, 1.0f);
+
+            const bool over = box.isMouseOver (true) && box.isEnabled();
+            const auto zone = over ? stepper->zoneAt (box.getMouseXYRelative().x) : StepperBox::Zone::middle;
+            const auto arrow = box.findColour (juce::ComboBox::arrowColourId);
+            const float cy = bounds.getCentreY();
+            const float half = juce::jmin (4.5f, bounds.getHeight() * 0.22f);
+            const float zoneW = static_cast<float> (StepperBox::arrowZone);
+
+            const auto chevron = [&] (float cx, bool pointsLeft, bool hot)
+            {
+                const float dir = pointsLeft ? -1.0f : 1.0f;
+                juce::Path p;
+                p.startNewSubPath (cx - dir * half * 0.5f, cy - half);
+                p.lineTo (cx + dir * half * 0.5f, cy);
+                p.lineTo (cx - dir * half * 0.5f, cy + half);
+                g.setColour (arrow.withAlpha (! box.isEnabled() ? 0.3f : (hot ? 1.0f : 0.7f)));
+                g.strokePath (p, juce::PathStrokeType (hot ? 2.2f : 1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            };
+
+            if (zone == StepperBox::Zone::left)
+            {
+                g.setColour (arrow.withAlpha (0.14f));
+                g.fillRoundedRectangle (bounds.withWidth (zoneW).reduced (1.0f), 3.0f);
+            }
+            else if (zone == StepperBox::Zone::right)
+            {
+                g.setColour (arrow.withAlpha (0.14f));
+                g.fillRoundedRectangle (bounds.withLeft (bounds.getRight() - zoneW).reduced (1.0f), 3.0f);
+            }
+
+            chevron (zoneW * 0.5f, true, zone == StepperBox::Zone::left);
+            chevron (static_cast<float> (width) - zoneW * 0.5f, false, zone == StepperBox::Zone::right);
+        }
+
+        void positionComboBoxText (juce::ComboBox& box, juce::Label& label) override
+        {
+            if (dynamic_cast<StepperBox*> (&box) != nullptr)
+                label.setBounds (StepperBox::arrowZone, 0, box.getWidth() - 2 * StepperBox::arrowZone, box.getHeight());
+            else
+                juce::LookAndFeel_V4::positionComboBoxText (box, label);
+        }
     };
 }

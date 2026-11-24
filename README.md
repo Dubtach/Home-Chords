@@ -67,17 +67,16 @@ source/
   Shared/
     HomeSeriesUI.h           The shared Home-series look (colours,
                           card/well painters, controls, ChordCard).
-    HelpPanel.h              The "?" shortcut cheat-sheet popup.
-    SettingsPanel.h          Keyboard-mode / note-spelling popup.
     MidiDragTile.h           "DRAG MIDI" tile for dragging out a .mid.
 tests/                    Catch2 unit tests.
 ```
 
 ## Controls
 
-- **Key / Scale** — the two combo boxes in the header.
+- **Key / Scale** — steppers in the header; **Export** and **DRAG MIDI** sit beside them.
+  Every selector is a stepper: click `<` / `>` to step, click the name for the list.
 - **Play chords** — **A S D F G H J**, **1-7**, the **numpad 1-7** (which
-  keys are active is set in Settings), the mouse, or an external **MIDI
+  keys are active is the KEYBOARD_MODE parameter, default both), the mouse, or an external **MIDI
   keyboard**: the white keys C D E F G A B play chords 1-7 in any octave.
 - **Right-click a chord card** — Quality, Extension, and **Borrowed chord**
   (bIII, iv, bVI, bVII, V/V ... for the key). The card changes to that
@@ -107,12 +106,12 @@ tests/                    Catch2 unit tests.
   (Bass follows the same selection-or-all rule as Rhythm.)
 - **Presets** — 27 progressions in Pop, Jazz, Chill, Minor and Basics,
   filtered to the ones that suit the current scale.
-- **Export / DRAG MIDI** — save the timeline as a .mid, or drag it into a DAW track.
+- **Export / DRAG MIDI** (header) — save the timeline as a .mid, or drag it into a DAW track.
 - **Hints** — dashed outlines mark likely next chords; "NEXT" is the top
-  pick, hover for the reason. Turn them off in Settings ("...").
+  pick, hover for the reason. On by default; the "Next-Chord Hints" parameter
+  turns them off.
 - **Humanize / Velocity / Tempo / Preview / Octave / Smooth voicing** — footer.
-- **Settings ("...")** — keyboard input mode, note spelling, next-chord hints.
-- **Shortcuts** (press **?**): Space play/stop, Home restart, L loop,
+- **Shortcuts**: Space play/stop, Home restart, L loop,
   Ctrl/Cmd+Z undo, +Shift+Z or Y redo (there are no undo buttons), +A select
   all, +C/X/V copy/cut/paste, +D duplicate, Delete remove, Left/Right move
   the selection one place, Up/Down octave, Esc deselect.

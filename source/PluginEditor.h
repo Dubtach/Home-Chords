@@ -3,8 +3,6 @@
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 #include "Shared/HomeSeriesUI.h"
-#include "Shared/SettingsPanel.h"
-#include "Shared/HelpPanel.h"
 #include "Shared/MidiDragTile.h"
 #include "Timeline/TimelineComponent.h"
 
@@ -57,8 +55,9 @@ private:
     std::array<homeUI::ChordCard, musictheory::maxDiatonicSlots> chordCards;
     int currentSlotCount = 7;
 
-    juce::ComboBox keyBox, scaleBox, timeSigBox, snapBox, voicingBox;
-    juce::ComboBox rhythmBox, bassBox, arpModeBox, arpRateBox, gateBox;
+    // Steppers: `< value >` -- click the arrows to step, click the value for the list.
+    homeUI::StepperBox keyBox, scaleBox, timeSigBox, snapBox, voicingBox;
+    homeUI::StepperBox rhythmBox, bassBox, arpModeBox, arpRateBox, gateBox;
 
     homeUI::Checkbox autoInversionCheckbox { homeUI::green };
     homeUI::Checkbox loopCheckbox { homeUI::cyan };
@@ -73,8 +72,6 @@ private:
     homeUI::Knob humanizeVelKnob  { "VEL VAR", homeUI::purple };
 
     homeUI::TimeSigChip timeSigChip;   // sits in the timeline's corner; timeSigBox (hidden) holds the parameter
-    juce::TextButton settingsButton { "..." };
-    juce::TextButton helpButton { "?" };
     juce::TextButton playStopButton { "Play" };
     juce::TextButton restartButton { "|<" };
     juce::TextButton presetsButton { "Presets" };
@@ -122,8 +119,6 @@ private:
     void showTimeSigMenu();
     void showPresetMenu();
     void applyPreset (int presetIndex);
-    void showSettingsPanel();
-    void showHelpPanel();
     void exportMidiWithDialog();
     juce::File writeDragFile();
     void updateHints (juce::uint32 triggeredSlots, juce::uint32 activeSlots);

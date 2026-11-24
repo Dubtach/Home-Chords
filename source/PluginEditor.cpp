@@ -35,7 +35,7 @@ namespace
         box.setColour (juce::ComboBox::textColourId, juce::Colours::white);
         box.setColour (juce::ComboBox::outlineColourId, homeUI::slotEdge);
         box.setColour (juce::ComboBox::arrowColourId, homeUI::cyan);
-        box.setJustificationType (juce::Justification::centredLeft);
+        box.setJustificationType (juce::Justification::centred);
     }
 
     void styleTextButton (juce::TextButton& button, juce::Colour accent)
@@ -147,22 +147,18 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
     previewKnob.valueText  = [] (double v) { return juce::String (v, 1) + " dB"; };
     tempoKnob.valueText    = [] (double v) { return juce::String (static_cast<int> (v)); };
 
-    for (auto* button : { &settingsButton, &helpButton, &playStopButton, &restartButton,
+    for (auto* button : { &playStopButton, &restartButton,
                           &presetsButton, &exportButton })
     {
         styleTextButton (*button, homeUI::cyan);
         addAndMakeVisible (*button);
     }
 
-    settingsButton.setTooltip ("Keyboard input and note spelling");
-    helpButton.setTooltip ("Shortcuts and gestures");
     playStopButton.setTooltip ("Play / stop the timeline (Space)");
     restartButton.setTooltip ("Back to the start (Home)");
     presetsButton.setTooltip ("Ready-made progressions for this key");
     exportButton.setTooltip ("Save the progression as a MIDI file");
 
-    settingsButton.onClick = [this] { showSettingsPanel(); };
-    helpButton.onClick = [this] { showHelpPanel(); };
     presetsButton.onClick = [this] { showPresetMenu(); };
     exportButton.onClick = [this] { exportMidiWithDialog(); };
 
@@ -256,14 +252,14 @@ void HomeChordsAudioProcessorEditor::resized()
     area.removeFromBottom (5);
     auto timelineArea = area;   // whatever's left
 
-    // ---- header: brand ... lamp | key | scale | settings | help ----
-    helpButton.setBounds (header.removeFromRight (26).reduced (0, 3));
+    // ---- header: brand ... lamp | key | scale | export | drag midi ----
+    dragTile.setBounds (header.removeFromRight (92));
     header.removeFromRight (4);
-    settingsButton.setBounds (header.removeFromRight (30).reduced (0, 3));
-    header.removeFromRight (8);
-    scaleBox.setBounds (header.removeFromRight (132).reduced (0, 3));
+    exportButton.setBounds (header.removeFromRight (56));
+    header.removeFromRight (14);
+    scaleBox.setBounds (header.removeFromRight (150).reduced (0, 3));
     header.removeFromRight (4);
-    keyBox.setBounds (header.removeFromRight (78).reduced (0, 3));
+    keyBox.setBounds (header.removeFromRight (92).reduced (0, 3));
     header.removeFromRight (10);
     lampBounds = header.removeFromRight (74).toFloat();
     brandBounds = header.toFloat();
@@ -289,17 +285,14 @@ void HomeChordsAudioProcessorEditor::resized()
     // ---- tools row ----
     {
         auto right = toolsRow;
-        dragTile.setBounds (right.removeFromRight (88));
-        right.removeFromRight (4);
-        exportButton.setBounds (right.removeFromRight (52));
+        presetsButton.setBounds (right.removeFromRight (104));
         right.removeFromRight (10);
 
-        auto left = toolsRow.withRight (right.getRight() - 10);
+        auto left = toolsRow.withRight (right.getRight());
         put (left, playStopButton, 50);
         put (left, restartButton, 28, 8);
         put (left, loopCheckbox, 58, 6);
         put (left, syncCheckbox, 92, 8);
-        put (left, presetsButton, 66, 4);
     }
 
     // ---- timeline ----
@@ -309,7 +302,7 @@ void HomeChordsAudioProcessorEditor::resized()
 
     // ---- playback row: label | rhythm | arp | rate | gate ----
     playbackLabelBounds = playbackRow.removeFromLeft (94).toFloat();
-    put (playbackRow, rhythmBox, 104);
+    put (playbackRow, rhythmBox, 124);
     put (playbackRow, arpModeBox, 112);
     put (playbackRow, arpRateBox, 58);
     put (playbackRow, gateBox, 94);
@@ -330,7 +323,7 @@ void HomeChordsAudioProcessorEditor::resized()
     footerContent.removeFromLeft (14);
 
     // Voicing group: how the notes are arranged -- spread, bass note, smoothing.
-    auto voicingArea = footerContent.removeFromLeft (124);
+    auto voicingArea = footerContent.removeFromLeft (150);
     voicingBox.setBounds (voicingArea.removeFromTop (20));
     voicingArea.removeFromTop (1);
     bassBox.setBounds (voicingArea.removeFromTop (20));
@@ -495,7 +488,7 @@ void HomeChordsAudioProcessorEditor::refreshPlaybackControls()
 
     {
         const juce::ScopedValueSetter<bool> guard (syncingPlaybackBoxes, true);
-        juce::ComboBox* boxes[] = { &rhythmBox, &bassBox, &arpModeBox, &arpRateBox, &gateBox };
+        homeUI::StepperBox* boxes[] = { &rhythmBox, &bassBox, &arpModeBox, &arpRateBox, &gateBox };
 
         for (int f = 0; f < 5; ++f)
             boxes[f]->setSelectedItemIndex (values[f], juce::dontSendNotification);   // -1 shows "Mixed"
@@ -588,12 +581,6 @@ bool HomeChordsAudioProcessorEditor::keyPressed (const juce::KeyPress& key)
 
     if (key.isKeyCode (juce::KeyPress::upKey))   { nudgeOctave (1);  return true; }
     if (key.isKeyCode (juce::KeyPress::downKey)) { nudgeOctave (-1); return true; }
-
-    if (key == juce::KeyPress::F1Key || key.getTextCharacter() == '?')
-    {
-        showHelpPanel();
-        return true;
-    }
 
     return false;
 }
@@ -901,11 +888,6 @@ void HomeChordsAudioProcessorEditor::applyPreset (int presetIndex)
     timelineComponent.refreshFromModel();
 }
 
-void HomeChordsAudioProcessorEditor::showHelpPanel()
-{
-    juce::CallOutBox::launchAsynchronously (std::make_unique<homeUI::HelpPanel>(), helpButton.getScreenBounds(), nullptr);
-}
-
 void HomeChordsAudioProcessorEditor::showTimeSigMenu()
 {
     juce::PopupMenu menu;
@@ -919,36 +901,6 @@ void HomeChordsAudioProcessorEditor::showTimeSigMenu()
         if (safe != nullptr && result > 0)
             safe->timeSigBox.setSelectedItemIndex (result - 1, juce::sendNotificationSync);
     });
-}
-
-void HomeChordsAudioProcessorEditor::showSettingsPanel()
-{
-    const auto keyboardMode = static_cast<int> (processor.apvts.getRawParameterValue ("KEYBOARD_MODE")->load());
-    const auto noteSpelling = static_cast<int> (processor.apvts.getRawParameterValue ("NOTE_SPELLING")->load());
-
-    auto panel = std::make_unique<homeUI::SettingsPanel> (keyboardMode, noteSpelling, hintsCheckbox.getToggleState());
-
-    panel->onKeyboardModeChosen = [this] (int index)
-    {
-        if (auto* param = dynamic_cast<juce::AudioParameterChoice*> (processor.apvts.getParameter ("KEYBOARD_MODE")))
-            *param = index;
-        refreshChordCards();
-    };
-
-    panel->onNoteSpellingChosen = [this] (int index)
-    {
-        if (auto* param = dynamic_cast<juce::AudioParameterChoice*> (processor.apvts.getParameter ("NOTE_SPELLING")))
-            *param = index;
-        refreshChordCards();
-    };
-
-    panel->onHintsChosen = [this] (bool on)
-    {
-        hintsCheckbox.setToggleState (on, juce::sendNotificationSync);   // writes the HINTS parameter
-    };
-
-    const auto targetBounds = settingsButton.getScreenBounds();
-    juce::CallOutBox::launchAsynchronously (std::move (panel), targetBounds, nullptr);
 }
 
 double HomeChordsAudioProcessorEditor::snapBeatsFromParam() const

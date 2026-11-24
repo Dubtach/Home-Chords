@@ -668,8 +668,22 @@ void HomeChordsAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
 
     bool anyNoteThisBlock = false;
 
+    previewSynth.setGain (juce::Decibels::decibelsToGain (previewGainDb));
+
+    // Render up to each MIDI event and apply it exactly where it falls, so fast
+    // arpeggios keep their timing instead of snapping to the block start.
+    int rendered = 0;
+
     for (const auto metadata : midi)
     {
+        const int at = juce::jlimit (rendered, numSamples, metadata.samplePosition);
+
+        if (at > rendered)
+        {
+            previewSynth.renderBlock (buffer, rendered, at - rendered);
+            rendered = at;
+        }
+
         const auto message = metadata.getMessage();
 
         if (message.isNoteOn())
@@ -683,8 +697,8 @@ void HomeChordsAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         }
     }
 
-    previewSynth.setGain (juce::Decibels::decibelsToGain (previewGainDb));
-    previewSynth.renderBlock (buffer, 0, numSamples);
+    if (rendered < numSamples)
+        previewSynth.renderBlock (buffer, rendered, numSamples - rendered);
 
     float activity = midiActivityForUi.load (std::memory_order_relaxed);
     activity = anyNoteThisBlock ? 1.0f : activity * 0.90f;

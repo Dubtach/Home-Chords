@@ -444,6 +444,34 @@ Requested after trying v2; all of it is in this build.
   tall enough; footer is 74 px with Spread / Bass / Smooth voicing grouped.
 - Hints toggle moved to the settings panel.
 
+## v6 pass — steppers, click-free audio, drag previews
+
+- **Steppers.** Every selector (Key, Scale, Spread, Bass, Rhythm, Arp mode /
+  rate, Gate) is a `homeUI::StepperBox`: a real ComboBox drawn as `< value >`.
+  Arrows step (wrapping); clicking the value opens the list; mouse wheel still
+  works. Attachments and onChange are unchanged.
+- **Audio clicks (PreviewSynth).** Causes found: (1) a note retriggered while
+  still sounding/releasing restarted its phase at zero (waveform jump) --
+  restarts on restart, fast chords and fast arps; (2) when all voices were busy
+  a voice was cut off instantly; (3) note events were applied at the start of
+  the block, not at their sample position; (4) the mix could hard-clip and the
+  preview volume stepped. Fixes: same-note retrigger keeps the voice and phase
+  (envelope attacks from its current level, velocity glides); stolen voices
+  fade out in a "ghost" over 128 samples; events are applied sample-accurately
+  (render up to each event); tanh soft clip; smoothed volume; 32 voices;
+  release 0.45 s. New `[clicks]` Catch2 tests measure the largest
+  sample-to-sample step (they fail against the old phase-reset behaviour).
+- **Timeline previews.** Dragging blocks: the others close up around an open
+  dashed slot (the landing place) and the dragged blocks float under the
+  pointer (red + faded when outside = will delete). Card drops show the real
+  chord (not a default C) in a dashed ghost slot.
+- **Removed:** the "..." settings popup and the "?" shortcut popup (and
+  their files). KEYBOARD_MODE, NOTE_SPELLING and Next-Chord Hints remain as
+  host-automatable parameters with their defaults (letters+numbers, auto,
+  hints on) -- there is no longer a UI for them.
+- **Moved:** Export and DRAG MIDI to the header beside Key/Scale; Presets
+  to the right end of the tools row.
+
 ## Testing performed
 
 **Read this before trusting anything new in this pass.** (This section is the

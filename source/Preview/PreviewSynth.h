@@ -35,33 +35,60 @@ namespace preview
 
         void renderBlock (juce::AudioBuffer<float>& buffer, int startSample, int numSamples) noexcept;
 
-        void setGain (float linearGain) noexcept { gain = linearGain; }
+        void setGain (float linearGain) noexcept { gainSmoothed.setTargetValue (linearGain); }
 
     private:
+        // Click-free by construction:
+        //   * a note that is already sounding (even one still releasing) is
+        //     retriggered on the SAME voice with its phase left alone, so the
+        //     waveform never jumps; only the envelope restarts, from where it is;
+        //   * when every voice is busy, the one that is stolen is handed to a
+        //     "ghost" that fades out over a couple of milliseconds while the
+        //     new note takes the voice, so nothing is ever cut off;
+        //   * velocity changes and the preview volume are smoothed;
+        //   * the mix goes through a soft clipper instead of hard-clipping.
         struct Voice
         {
             bool active = false;
+            bool held = false;                // false once note-off has arrived
             int midiNote = -1;
+            juce::uint64 age = 0;
             double phase1 = 0.0, phase2 = 0.0;
             double phaseIncrement1 = 0.0, phaseIncrement2 = 0.0;
-            float velocity = 0.0f;
+            float velocity = 0.0f;            // target
+            float velocitySmoothed = 0.0f;
+            float lastLevel = 0.0f;           // envelope * velocity at the last sample
             juce::ADSR adsr;
         };
 
-        static constexpr int maxVoices = 24;
+        struct Ghost
+        {
+            bool active = false;
+            double phase1 = 0.0, phase2 = 0.0;
+            double phaseIncrement1 = 0.0, phaseIncrement2 = 0.0;
+            float level = 0.0f;
+            float step = 0.0f;
+        };
+
+        static constexpr int maxVoices = 32;
+        static constexpr int maxGhosts = 16;
+        static constexpr int stealFadeSamples = 128;
 
         double sampleRate = 44100.0;
-        float gain = 0.7f;
-        juce::ADSR::Parameters adsrParams { 0.008f, 0.25f, 0.55f, 0.6f };
+        juce::SmoothedValue<float> gainSmoothed { 0.7f };
+        juce::ADSR::Parameters adsrParams { 0.008f, 0.25f, 0.55f, 0.45f };
+        juce::uint64 ageCounter = 0;
 
         juce::dsp::IIR::Filter<float> toneFilter;
         juce::AudioBuffer<float> scratchMono;
 
         std::array<Voice, maxVoices> voices;
+        std::array<Ghost, maxGhosts> ghosts;
 
         void renderChunk (juce::AudioBuffer<float>& buffer, int startSample, int numSamples) noexcept;
-        Voice* findFreeVoice() noexcept;
         Voice* findVoiceForNote (int midiNote) noexcept;
+        Voice* takeVoiceForNewNote() noexcept;
+        void fadeOutAsGhost (const Voice&) noexcept;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PreviewSynth)
     };

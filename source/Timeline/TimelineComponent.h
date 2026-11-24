@@ -135,6 +135,7 @@ namespace timeline
         bool draggingRightEdge = false;
         bool dragOutside = false;
         int dragStartMouseX = 0;
+        int dragStartMouseY = 0;
         double scaleLockBeats = 0.0;   // > 0: freeze the pixel scale during a drag
 
         // Rubber band.
@@ -144,8 +145,12 @@ namespace timeline
         juce::Rectangle<int> marqueeRect;
         std::vector<juce::Uuid> selectionBeforeMarquee;
 
-        // Card drop.
+        // Card drop: the chord being dragged in (shown in its slot as a ghost).
+        progression::ChordEvent dropEvent;
         double dropLength = 4.0;
+
+        // While dragging blocks they float under the pointer; the slot they will land in stays open.
+        juce::Point<int> dragOffset;
 
         std::vector<progression::ChordEvent> shown() const;   // the preview while a gesture runs, else the model
         double totalTimelineBeats() const noexcept;
@@ -164,6 +169,7 @@ namespace timeline
         void commit (std::vector<progression::ChordEvent> events, const juce::String& undoName);
         void endGesture();
         void showContextMenu (const juce::MouseEvent&);
+        void drawBlock (juce::Graphics&, const progression::ChordEvent&, juce::Rectangle<float> bounds, bool selected, bool floating, bool slot, bool ghost) const;
         void addSlotEvent (int slot, int index);
         static int slotFromDescription (const juce::var& description);
 

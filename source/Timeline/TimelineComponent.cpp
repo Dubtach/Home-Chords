@@ -227,55 +227,26 @@ namespace timeline
             g.fillRect (juce::Rectangle<float> (loopX1 - 1.5f, 0.0f, 3.0f, loopMarkerHeight));
         }
 
-        // Chord blocks.
+        // Chord blocks. While blocks are being dragged, the ones that are not
+        // moving close up around an open, dashed slot (where the drag will land),
+        // and the dragged blocks float under the pointer.
         const bool removing = dragOutside && draggingBody;   // the preview already has the chords taken out
+        const bool dragging = draggingBody && previewActive;
 
         for (const auto& event : shown())
         {
-            const auto bounds = blockBoundsFor (event);
             const bool isGhost = (event.id == ghostId);
+            const bool isSlot = dragging && ! dragOutside && progression::layout::containsId (dragIds, event.id);
+            drawBlock (g, event, blockBoundsFor (event), isSelected (event.id), false, isSlot, isGhost);
+        }
 
-            juce::Colour accent = homeUI::green;
-            switch (event.quality)
-            {
-                case musictheory::ChordQuality::Major:      accent = homeUI::cyan;   break;
-                case musictheory::ChordQuality::Minor:      accent = homeUI::purple; break;
-                case musictheory::ChordQuality::Diminished: accent = homeUI::warn;   break;
-                case musictheory::ChordQuality::Augmented:  accent = homeUI::pink;   break;
-                default:                                    accent = homeUI::green;  break;
-            }
-
-            const bool isSel = isSelected (event.id);
-
-            g.saveState();
-            if (isGhost)
-                g.setOpacity (0.55f);
-
-            homeUI::drawCard (g, bounds.reduced (1.5f), isSel ? accent.brighter (0.3f) : accent.darker (event.enabled ? 0.0f : 0.5f));
-
-            if (isGhost)
-            {
-                juce::Path outline;
-                outline.addRoundedRectangle (bounds.reduced (1.5f), 6.0f);
-                juce::Path dashed;
-                const float dashes[] = { 5.0f, 4.0f };
-                juce::PathStrokeType (1.5f).createDashedStroke (dashed, outline, dashes, 2);
-                g.setColour (juce::Colours::white.withAlpha (0.9f));
-                g.fillPath (dashed);
-            }
-            else if (isSel)
-            {
-                g.setColour (juce::Colours::white.withAlpha (0.9f));
-                g.drawRoundedRectangle (bounds.reduced (1.5f), 6.0f, 2.0f);
-            }
-
-            const auto rootName = musictheory::noteName (event.rootPitchClass, useFlats);
-            const auto chordName = rootName + musictheory::chordQualitySuffix (event.quality)
-                                            + musictheory::extensionSuffix (event.extension);
-
-            auto content = bounds.reduced (5.0f, 3.0f);
-            homeUI::drawCardText (g, chordName, content, juce::jmin (15.0f, content.getHeight() * 0.5f));
-            g.restoreState();
+        if (dragging)
+        {
+            for (const auto& original : dragOriginal)
+                if (progression::layout::containsId (dragIds, original.id))
+                    drawBlock (g, original, blockBoundsFor (original).translated (static_cast<float> (dragOffset.x),
+                                                                                    static_cast<float> (dragOffset.y)),
+                               true, true, false, false);
         }
 
         // Playhead.
@@ -313,6 +284,72 @@ namespace timeline
             g.drawText ("Drag chords here from the cards above   (or double-click a card)",
                         getLocalBounds(), juce::Justification::centred, false);
         }
+    }
+
+    void TimelineComponent::drawBlock (juce::Graphics& g, const progression::ChordEvent& event, juce::Rectangle<float> bounds,
+                                       bool selected, bool floating, bool slot, bool ghost) const
+    {
+        juce::Colour accent = homeUI::green;
+        switch (event.quality)
+        {
+            case musictheory::ChordQuality::Major:      accent = homeUI::cyan;   break;
+            case musictheory::ChordQuality::Minor:      accent = homeUI::purple; break;
+            case musictheory::ChordQuality::Diminished: accent = homeUI::warn;   break;
+            case musictheory::ChordQuality::Augmented:  accent = homeUI::pink;   break;
+            default:                                    accent = homeUI::green;  break;
+        }
+
+        const auto outline = bounds.reduced (1.5f);
+        const auto dashedOutline = [&g, &outline]
+        {
+            juce::Path path;
+            path.addRoundedRectangle (outline, 6.0f);
+            juce::Path dashed;
+            const float dashes[] = { 5.0f, 4.0f };
+            juce::PathStrokeType (1.5f).createDashedStroke (dashed, path, dashes, 2);
+            g.setColour (juce::Colours::white.withAlpha (0.9f));
+            g.fillPath (dashed);
+        };
+
+        g.saveState();
+
+        if (slot)
+        {
+            // The open slot a dragged chord will land in: a faint, dashed place-holder.
+            g.setColour (accent.withAlpha (0.16f));
+            g.fillRoundedRectangle (outline, 6.0f);
+            dashedOutline();
+            g.restoreState();
+            return;
+        }
+
+        if (ghost)
+            g.setOpacity (0.62f);
+        else if (floating)
+            g.setOpacity (dragOutside ? 0.5f : 0.88f);
+
+        homeUI::drawCard (g, outline, (selected || floating) ? accent.brighter (0.3f) : accent.darker (event.enabled ? 0.0f : 0.5f));
+
+        if (ghost)
+            dashedOutline();
+        else if (floating)
+        {
+            g.setColour ((dragOutside ? homeUI::warn : juce::Colours::white).withAlpha (0.95f));
+            g.drawRoundedRectangle (outline, 6.0f, 2.0f);
+        }
+        else if (selected)
+        {
+            g.setColour (juce::Colours::white.withAlpha (0.9f));
+            g.drawRoundedRectangle (outline, 6.0f, 2.0f);
+        }
+
+        const auto rootName = musictheory::noteName (event.rootPitchClass, useFlats);
+        const auto chordName = rootName + musictheory::chordQualitySuffix (event.quality)
+                                        + musictheory::extensionSuffix (event.extension);
+
+        auto content = bounds.reduced (5.0f, 3.0f);
+        homeUI::drawCardText (g, chordName, content, juce::jmin (15.0f, content.getHeight() * 0.5f));
+        g.restoreState();
     }
 
     // ---- mouse --------------------------------------------------------------
@@ -354,6 +391,8 @@ namespace timeline
             dragIds = selection;
             dragOriginal = model.getEvents();
             dragStartMouseX = x;
+            dragStartMouseY = y;
+            dragOffset = {};
             dragOutside = false;
             draggingRightEdge = onRightEdge;
             draggingBody = ! onRightEdge;
@@ -407,6 +446,7 @@ namespace timeline
         if (draggingBody)
         {
             dragOutside = isOutside (event.getPosition());
+            dragOffset = { event.x - dragStartMouseX, event.y - dragStartMouseY };
 
             if (dragOutside)
                 previewEvents = progression::layout::without (dragOriginal, dragIds);
@@ -646,9 +686,12 @@ namespace timeline
         interacting = true;
         scaleLockBeats = totalTimelineBeats();
 
-        progression::ChordEvent preview;
-        if (makeEventFromSlot != nullptr && makeEventFromSlot (slotFromDescription (details.description), preview))
-            dropLength = preview.lengthBeats;
+        // Keep the real chord (not a default C) so the ghost shows what will land.
+        dropEvent = {};
+        dropLength = 4.0;
+
+        if (makeEventFromSlot != nullptr && makeEventFromSlot (slotFromDescription (details.description), dropEvent))
+            dropLength = dropEvent.lengthBeats;
 
         ghostId = juce::Uuid();
         itemDragMove (details);
@@ -658,7 +701,7 @@ namespace timeline
     {
         const auto events = model.getEvents();
 
-        progression::ChordEvent ghost;
+        auto ghost = dropEvent;
         ghost.id = ghostId;
         ghost.lengthBeats = dropLength;
 
