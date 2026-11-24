@@ -137,8 +137,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout HomeChordsAudioProcessor::cr
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         "HINTS", "Next-Chord Hints", true, BoolAttributes{}));
 
-    // Global playback style, stamped onto every chord of the timeline (see
-    // applyPlaybackSettingsToTimeline). The choice lists mirror the tables in
+    // Default playback style for new chords (and the whole timeline when nothing is selected) (see
+    // applyPlaybackField). The choice lists mirror the tables in
     // Progression/PlaybackSettings.h.
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         "RHYTHM", "Rhythm",
@@ -427,7 +427,7 @@ void HomeChordsAudioProcessor::addChordFromSlotToTimeline (int slot)
 
     undoManager.beginNewTransaction ("Add chord");
     undoManager.perform (new progression::AddChordAction (progression, event));
-    extendLoopToCoverProgression();
+    fitLoopToProgression();
 }
 
 progression::PlaybackSettings HomeChordsAudioProcessor::getPlaybackSettings() const
@@ -438,28 +438,38 @@ progression::PlaybackSettings HomeChordsAudioProcessor::getPlaybackSettings() co
                                                        value ("ARP_RATE"), value ("GATE"));
 }
 
-void HomeChordsAudioProcessor::applyPlaybackSettingsToTimeline()
+void HomeChordsAudioProcessor::applyPlaybackField (progression::PlaybackField field, int choice, const std::vector<juce::Uuid>& scope)
 {
-    const auto settings = getPlaybackSettings();
+    // With nothing selected the change is global: it also becomes the default
+    // for chords added later. With a selection it touches only those chords.
+    if (scope.empty())
+    {
+        static constexpr const char* ids[] = { "RHYTHM", "BASS_MODE", "ARP_MODE", "ARP_RATE", "GATE" };
+
+        if (auto* param = dynamic_cast<juce::AudioParameterChoice*> (apvts.getParameter (ids[static_cast<int> (field)])))
+            *param = choice;
+    }
 
     std::vector<progression::ChordEvent> changed;
 
     for (int i = 0; i < progression.size(); ++i)
     {
-        const auto& event = progression.getEvent (i);
+        auto event = progression.getEvent (i);
 
-        if (! settings.matches (event))
-        {
-            auto copy = event;
-            settings.applyTo (copy);
-            changed.push_back (copy);
-        }
+        if (! scope.empty() && ! progression::layout::containsId (scope, event.id))
+            continue;
+
+        if (progression::fieldChoice (event, field) == choice)
+            continue;
+
+        progression::applyField (event, field, choice);
+        changed.push_back (event);
     }
 
     if (changed.empty())
         return;
 
-    undoManager.beginNewTransaction ("Change playback style");
+    undoManager.beginNewTransaction (scope.empty() ? "Change playback style" : "Change playback style (selection)");
 
     for (const auto& event : changed)
         undoManager.perform (new progression::UpdateChordAction (progression, event.id, event));
@@ -469,28 +479,29 @@ void HomeChordsAudioProcessor::replaceTimeline (const progression::ProgressionMo
 {
     const auto settings = getPlaybackSettings();
 
-    undoManager.beginNewTransaction (undoName);
-    undoManager.perform (new progression::ClearProgressionAction (progression));
+    auto events = model.getEvents();
+    progression::layout::pack (events);
 
-    for (int i = 0; i < model.size(); ++i)
+    for (auto& event : events)
     {
-        auto event = model.getEvent (i);
         event.velocity = static_cast<int> (velocityParam->load());
         settings.applyTo (event);
-        undoManager.perform (new progression::AddChordAction (progression, event));
     }
 
-    extendLoopToCoverProgression();
+    undoManager.beginNewTransaction (undoName);
+    undoManager.perform (new progression::SetEventsAction (progression, std::move (events)));
+    fitLoopToProgression();
 }
 
-void HomeChordsAudioProcessor::extendLoopToCoverProgression()
+void HomeChordsAudioProcessor::fitLoopToProgression()
 {
-    const double bar = getBeatsPerBar();
+    // The loop always spans exactly the chords: it follows every add, delete,
+    // reorder and resize, so there is never anything to drag by hand.
     const double end = progression.getTotalLengthBeats();
-    const double needed = std::ceil (end / bar - 1.0e-9) * bar;
+    const double wanted = end > 0.0 ? end : getBeatsPerBar() * 4.0;
 
-    if (needed > sequencePlayer.getLoopEndBeats())
-        sequencePlayer.setLoopRange (sequencePlayer.getLoopStartBeats(), needed);
+    if (sequencePlayer.getLoopStartBeats() != 0.0 || sequencePlayer.getLoopEndBeats() != wanted)
+        sequencePlayer.setLoopRange (0.0, wanted);
 }
 
 void HomeChordsAudioProcessor::setSequencePlaying (bool shouldPlay)
@@ -747,9 +758,12 @@ void HomeChordsAudioProcessor::setStateInformation (const void* data, int sizeIn
                 setChoice ("GATE", nearest (progression::gateByChoice, first.arpGate));
             }
 
-            const double loopStart = static_cast<double> (state.getProperty ("loopStartBeats", 0.0));
-            const double loopEnd = static_cast<double> (state.getProperty ("loopEndBeats", 16.0));
-            sequencePlayer.setLoopRange (loopStart, loopEnd);
+            // Sessions from before the timeline became gap-free may have overlaps
+            // or holes: close them up, and span the loop over the result.
+            auto restored = progression.getEvents();
+            progression::layout::pack (restored);
+            progression.setEvents (std::move (restored));
+            fitLoopToProgression();
         }
     }
 }

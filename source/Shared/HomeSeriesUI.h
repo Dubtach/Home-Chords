@@ -267,78 +267,68 @@ namespace homeUI
         void setCaption (const juce::String& c) { caption = c; repaint(); }
         void setAccent (juce::Colour c) { accent = c; repaint(); }
 
+        // A compact dial with its caption and value stacked beside it:
+        //
+        //    (dial)  VELOCITY
+        //            100
+        //
+        // Thin arcs and a single pointer line, so it stays crisp at this size.
         void paint (juce::Graphics& g) override
         {
-            auto area = getLocalBounds().toFloat();
-            auto captionRow = area.removeFromTop (captionSize + 4.0f);
-            auto valueRow = area.removeFromBottom (13.0f);
+            auto area = getLocalBounds().toFloat().reduced (2.0f, 0.0f);
 
-            drawCardText (g, caption, captionRow, captionSize);
+            const float dialSize = juce::jmin (area.getHeight(), 42.0f);
+            auto dialArea = area.removeFromLeft (dialSize).withSizeKeepingCentre (dialSize, dialSize);
+            area.removeFromLeft (6.0f);
 
-            const float radius = juce::jmin (area.getWidth(), area.getHeight()) * 0.5f - 4.0f;
-            const float cx = area.getCentreX();
-            const float cy = area.getCentreY();
+            const float cx = dialArea.getCentreX();
+            const float cy = dialArea.getCentreY();
+            const float radius = dialSize * 0.5f - 2.0f;
+            const float trackRadius = radius - 2.0f;
             const auto proportion = juce::jlimit (0.0f, 1.0f,
                                                   static_cast<float> (valueToProportionOfLength (getValue())));
             const float angle = startAngle + proportion * (endAngle - startAngle);
+            const bool on = isEnabled();
+            const auto colour = on ? accent : juce::Colours::grey;
 
-            g.setColour (juce::Colour (0xff0a0a0c));
-            g.fillEllipse (cx - radius + 2.0f, cy - radius + 2.0f, (radius - 2.0f) * 2.0f, (radius - 2.0f) * 2.0f);
+            // Body.
+            g.setColour (juce::Colour (0xff101014));
+            g.fillEllipse (cx - radius, cy - radius, radius * 2.0f, radius * 2.0f);
+            g.setColour (juce::Colours::white.withAlpha (0.14f));
+            g.drawEllipse (cx - radius, cy - radius, radius * 2.0f, radius * 2.0f, 1.0f);
 
-            {
-                constexpr int ticks = 11;
-                g.setColour (juce::Colours::white.withAlpha (0.18f));
-
-                for (int t = 0; t < ticks; ++t)
-                {
-                    const float a = startAngle + (endAngle - startAngle)
-                                                 * (static_cast<float> (t) / static_cast<float> (ticks - 1));
-                    const float inner = radius + 2.0f;
-                    const float outer = radius + 5.0f;
-                    g.drawLine (cx + std::sin (a) * inner, cy - std::cos (a) * inner,
-                                cx + std::sin (a) * outer, cy - std::cos (a) * outer,
-                                (t == 0 || t == ticks - 1 || t == ticks / 2) ? 1.4f : 1.0f);
-                }
-            }
-
-            juce::Path bgArc;
-            bgArc.addCentredArc (cx, cy, radius, radius, 0.0f, startAngle, endAngle, true);
-            g.setColour (juce::Colours::black.withAlpha (0.4f));
-            g.strokePath (bgArc, juce::PathStrokeType (6.0f, juce::PathStrokeType::curved,
-                                                       juce::PathStrokeType::rounded));
+            // Track and value arcs.
+            const float arcRadius = trackRadius - 1.0f;
+            juce::Path track;
+            track.addCentredArc (cx, cy, arcRadius, arcRadius, 0.0f, startAngle, endAngle, true);
+            g.setColour (juce::Colours::white.withAlpha (0.16f));
+            g.strokePath (track, juce::PathStrokeType (2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
             if (angle > startAngle + 0.001f)
             {
-                juce::Path fillArc;
-                fillArc.addCentredArc (cx, cy, radius, radius, 0.0f, startAngle, angle, true);
-
-                g.setColour (accent.withAlpha (0.6f));
-                g.strokePath (fillArc, juce::PathStrokeType (14.0f, juce::PathStrokeType::curved,
-                                                             juce::PathStrokeType::rounded));
-                g.setColour (juce::Colours::white);
-                g.strokePath (fillArc, juce::PathStrokeType (5.0f, juce::PathStrokeType::curved,
-                                                             juce::PathStrokeType::rounded));
+                juce::Path value;
+                value.addCentredArc (cx, cy, arcRadius, arcRadius, 0.0f, startAngle, angle, true);
+                g.setColour (colour);
+                g.strokePath (value, juce::PathStrokeType (2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             }
 
-            g.setColour (juce::Colours::white);
-            g.fillEllipse (cx - 3.5f, cy - 3.5f, 7.0f, 7.0f);
+            // Pointer.
+            const float inner = radius * 0.18f;
+            const float outer = arcRadius - 4.0f;
+            g.setColour (juce::Colours::white.withAlpha (on ? 1.0f : 0.5f));
+            g.drawLine (cx + std::sin (angle) * inner, cy - std::cos (angle) * inner,
+                        cx + std::sin (angle) * outer, cy - std::cos (angle) * outer, 2.0f);
 
-            juce::Path pointer;
-            pointer.startNewSubPath (cx, cy);
-            pointer.lineTo (cx + (radius - 7.0f) * std::sin (angle), cy - (radius - 7.0f) * std::cos (angle));
+            // Caption over value, to the right of the dial.
+            const auto captionRow = area.removeFromTop (area.getHeight() * 0.5f);
+            g.setFont (font (captionSize - 1.0f));
+            g.setColour (juce::Colours::black.withAlpha (on ? 0.72f : 0.4f));
+            g.drawText (caption, captionRow.withTrimmedTop (4.0f), juce::Justification::bottomLeft, false);
 
-            g.setColour (accent.withAlpha (0.5f));
-            g.strokePath (pointer, juce::PathStrokeType (6.0f, juce::PathStrokeType::curved,
-                                                         juce::PathStrokeType::rounded));
-            g.setColour (juce::Colours::white);
-            g.strokePath (pointer, juce::PathStrokeType (2.5f, juce::PathStrokeType::curved,
-                                                         juce::PathStrokeType::rounded));
-
-            g.setColour (juce::Colours::white.withAlpha (0.1f));
-            g.drawEllipse (cx - (radius - 7.0f), cy - (radius - 7.0f), (radius - 7.0f) * 2.0f, (radius - 7.0f) * 2.0f, 1.0f);
-
-            drawCardText (g, valueText != nullptr ? valueText (getValue()) : juce::String (getValue(), 2),
-                          valueRow, 9.5f);
+            g.setFont (font (12.5f));
+            g.setColour (juce::Colours::white.withAlpha (on ? 1.0f : 0.5f));
+            g.drawText (valueText != nullptr ? valueText (getValue()) : juce::String (getValue(), 2),
+                        area.withTrimmedBottom (4.0f), juce::Justification::topLeft, false);
         }
 
     private:

@@ -12,6 +12,7 @@
 #include "Progression/ProgressionModel.h"
 #include "Progression/ProgressionActions.h"
 #include "Progression/PlaybackSettings.h"
+#include "Progression/TimelineLayout.h"
 #include "Timeline/SequencePlayer.h"
 
 // =============================================================================
@@ -113,17 +114,19 @@ public:
     // The Rhythm/Bass/Arp/Gate currently chosen in the global controls.
     progression::PlaybackSettings getPlaybackSettings() const;
 
-    // Stamps the current global playback settings onto every chord already
-    // on the timeline, as one undo step. Message thread only.
-    void applyPlaybackSettingsToTimeline();
+    // Sets one playback control (Rhythm, Bass, Arp mode/rate, Gate) as one
+    // undo step: on the chords in `scope`, or -- when `scope` is empty -- on
+    // every chord on the timeline and as the default for new chords.
+    // Message thread only.
+    void applyPlaybackField (progression::PlaybackField field, int choice, const std::vector<juce::Uuid>& scope);
 
     // Replaces the whole timeline with `model` as one undo step, stamping the
     // global playback settings on every chord and stretching the loop to
     // cover it. Message thread only.
     void replaceTimeline (const progression::ProgressionModel& model, const juce::String& undoName);
 
-    // Grows the loop's end (never shrinks it) so every chord is inside it.
-    void extendLoopToCoverProgression();
+    // Sets the loop to span exactly the chords (0 .. end of the last chord).
+    void fitLoopToProgression();
 
     // Colour chords for the current Key/Scale, spelled per NOTE_SPELLING.
     std::vector<musictheory::ColorChord> getCurrentColorChords() const;

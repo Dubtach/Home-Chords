@@ -6,8 +6,8 @@ series alongside Home-Disto and Home-Sidechain.
 Pick a Key and Scale, and the 7 diatonic chords are laid out on your
 computer keyboard (**A S D F G H J**, **1-7** or the **numpad**), your
 mouse, or an external MIDI keyboard's white keys. Play live, or drag the
-chord cards onto the timeline to build a progression, with global rhythm,
-arpeggiator and bass settings, borrowed chords, 27 presets, and MIDI export.
+chord cards onto the timeline to build a progression, with rhythm,
+arpeggiator and bass settings (all chords or just the selected ones), borrowed chords, 27 presets, and MIDI export.
 
 > **This is still a work in progress**, built incrementally and tested
 > through real CI feedback plus a local compile-and-test review pass. See
@@ -63,6 +63,7 @@ source/
     SequencePlayer.h        The audio-thread sequencer: Play/Stop/Loop,
                           rhythm/arpeggio scheduling.
     TimelineComponent.h      The timeline UI: drag, resize, select.
+    TimelineLayout.h         Gap-free layout rules (pack, reorder, insert, resize).
   Shared/
     HomeSeriesUI.h           The shared Home-series look (colours,
                           card/well painters, controls, ChordCard).
@@ -81,17 +82,21 @@ tests/                    Catch2 unit tests.
 - **Right-click a chord card** — Quality, Extension, and **Borrowed chord**
   (bIII, iv, bVI, bVII, V/V ... for the key). The card changes to that
   chord; "Reset to diatonic" undoes it. Overridden cards show a dot.
-- **Drag a chord card onto the timeline** to add it where you drop it
-  (snapped, never on top of another chord). Double-click a card to append it.
-- **Timeline** — click a block to select; shift/ctrl/cmd-click to add to
-  the selection; drag on empty space to rubber-band select; drag blocks to
-  move, the right edge to resize (all selected); drag blocks out of the
-  strip and release to delete; right-click for Delete / Duplicate / Copy /
-  Paste. Drag the small markers above the ruler to set the loop range
-  (it grows automatically to cover new chords).
-- **Rhythm / Bass / Arp / Rate / Gate** (the "All chords" row) — global:
-  changing one applies it to every chord on the timeline (one undo step),
-  and new chords pick up the current values.
+- **Drag a chord card onto the timeline** to insert it where you drop it;
+  the chords after it make room. Double-click a card to append it.
+- **Timeline** — a gap-free track: chords sit back to back from the start,
+  never overlap, and the loop always spans exactly the chords (so deleting
+  or adding never needs a manual loop fix). Click a block to select;
+  shift/ctrl/cmd-click to add to the selection; drag on empty space to
+  rubber-band select; drag blocks sideways to reorder, the right edge to
+  resize (later chords shift along); drag blocks out of the strip and
+  release to delete (the gap closes); right-click for Delete / Duplicate /
+  Copy / Paste.
+- **Rhythm / Bass / Arp / Rate / Gate** (the row under the timeline) — they
+  apply to the **selected chords**, or to **every chord when nothing is
+  selected** (the label on the left says which; the boxes show "Mixed" when
+  the chords differ). Arp direction, rate and gate only appear while the
+  scope uses the Arpeggio rhythm. New chords pick up the last global choice.
 - **Play / Restart / Loop** — the timeline's own transport (Tempo knob).
   **Host sync** follows the host's transport and position instead.
 - **Snap / Voicing / Time signature** — grid, chord spread, bar length.
@@ -103,9 +108,9 @@ tests/                    Catch2 unit tests.
 - **Humanize / Velocity / Tempo / Preview / Octave / Smooth voicing** — footer.
 - **Settings ("...")** — keyboard input mode and note spelling.
 - **Shortcuts** (press **?**): Space play/stop, Home restart, L loop,
-  Ctrl/Cmd+Z undo, +Shift+Z or Y redo, +A select all, +C/X/V copy/cut/paste,
-  +D duplicate, Delete remove, Left/Right nudge (Shift = a bar), Up/Down
-  octave, Esc deselect.
+  Ctrl/Cmd+Z undo, +Shift+Z or Y redo (there are no undo buttons), +A select
+  all, +C/X/V copy/cut/paste, +D duplicate, Delete remove, Left/Right move
+  the selection one place, Up/Down octave, Esc deselect.
 
 Full detail, architectural reasoning, and an honest list of what isn't
 built yet (or is a deliberate simplification): [`STATUS.md`](STATUS.md).

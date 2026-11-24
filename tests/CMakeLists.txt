@@ -52,6 +52,7 @@ add_executable(Tests
     MidiExportTests.cpp
     ColorAndSuggestionTests.cpp
     GlobalsAndPresetsTests.cpp
+    TimelineLayoutTests.cpp
 )
 
 target_include_directories(Tests PRIVATE ${CMAKE_SOURCE_DIR}/source)

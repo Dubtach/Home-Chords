@@ -9,25 +9,28 @@
 #include <vector>
 
 // =============================================================================
-// The progression timeline: a short strip of chord blocks positioned by beat,
-// with a bar ruler, playhead and loop-range shading.
+// The progression timeline: a short strip of chord blocks with a bar ruler,
+// playhead and loop shading. It is a "magnetic" track (see TimelineLayout.h):
+// chords always sit back to back from beat 0 -- they can't overlap and can't
+// leave a gap -- and the loop always spans exactly the chords.
 //
-//   * Drop a chord card on it to add that chord where you let go (snapped,
-//     and never on top of another chord).
+//   * Drop a chord card on it to insert that chord where you let go; the chords
+//     after it make room.
 //   * Click a block to select it; shift/ctrl/cmd-click adds to the selection;
 //     drag on empty space to rubber-band select several.
-//   * Drag the selection to move it; drag the right edge of a block to
-//     resize the whole selection; drag it out of the strip (above, below or
-//     off the side) and let go to delete it.
+//   * Drag the selection sideways to reorder it; drag the right edge of a block
+//     to resize the whole selection (later chords shift to follow); drag it out
+//     of the strip (above, below or off the side) and let go to delete it --
+//     the gap closes up.
 //   * Right-click a block for Delete / Duplicate / Copy / Paste / Select all.
 //
-// Every edit is one UndoManager transaction per gesture. There is no
-// horizontal scrolling: the visible width is scaled to fit the progression (or
-// the loop range, whichever is longer); the scale is frozen while a drag is in
-// progress so blocks don't slide under the mouse.
+// Drags are previewed without touching the model and applied as one undo step
+// when released. There is no horizontal scrolling: the visible width is scaled
+// to fit the progression; the scale is frozen while a drag is in progress so
+// blocks don't slide under the mouse.
 //
-// Rhythm / Bass / Arp / Gate are global (see PlaybackSettings.h), so the
-// blocks carry no per-chord controls -- just position, length and the chord.
+// Rhythm / Bass / Arp / Gate live on the chords but are edited from the
+// editor's playback row (selection, or all chords), not on the blocks.
 // =============================================================================
 
 namespace timeline
@@ -66,7 +69,7 @@ namespace timeline
         void clearSelection();
         void deleteSelected();
         void duplicateSelected();
-        void nudgeSelected (double deltaBeats);
+        void nudgeSelected (double deltaBeats);   // moves the selection one place earlier (<0) or later (>0)
         void copySelected();
         void pasteAtEnd();
         bool canPaste() const noexcept { return ! clipboard.empty(); }
@@ -89,13 +92,6 @@ namespace timeline
         static constexpr int idealHeight = 84;
 
     private:
-        struct DragItem
-        {
-            juce::Uuid id;
-            double startBeats = 0.0;
-            double lengthBeats = 0.0;
-        };
-
         double snapBeats = 0.25;
         double beatsPerBar = 4.0;
         bool useFlats = false;
@@ -115,18 +111,19 @@ namespace timeline
         juce::uint32 lastSeenModelRevision = 0;
         bool interacting = false;
 
+        // Live preview of a gesture in progress (the model is untouched until release).
+        bool previewActive = false;
+        std::vector<progression::ChordEvent> previewEvents;
+        juce::Uuid ghostId;   // the card being dragged in, drawn dashed
+
         // Block drag state.
-        std::vector<DragItem> dragItems;
+        std::vector<juce::Uuid> dragIds;
+        std::vector<progression::ChordEvent> dragOriginal;
         bool draggingBody = false;
         bool draggingRightEdge = false;
         bool dragOutside = false;
-        double dragDeltaBeats = 0.0;
         int dragStartMouseX = 0;
         double scaleLockBeats = 0.0;   // > 0: freeze the pixel scale during a drag
-
-        // Loop handle drag state.
-        bool draggingLoopStart = false;
-        bool draggingLoopEnd = false;
 
         // Rubber band.
         bool marqueeActive = false;
@@ -135,27 +132,27 @@ namespace timeline
         juce::Rectangle<int> marqueeRect;
         std::vector<juce::Uuid> selectionBeforeMarquee;
 
-        // Card-drop preview.
-        double dropBeat = -1.0;
+        // Card drop.
         double dropLength = 4.0;
 
+        std::vector<progression::ChordEvent> shown() const;   // the preview while a gesture runs, else the model
         double totalTimelineBeats() const noexcept;
         float pixelsPerBeat() const noexcept;
         double xToBeats (int x) const noexcept;
         int beatsToX (double beats) const noexcept;
-        double snap (double beats) const noexcept;
         double snapDelta (double beats) const noexcept;
         bool isOutside (juce::Point<int> p) const noexcept;
 
         juce::Rectangle<float> blockBoundsFor (const progression::ChordEvent& event) const noexcept;
-        const progression::ChordEvent* eventAt (int x, int y, bool* onRightEdge) const noexcept;
+        bool eventAt (int x, int y, juce::Uuid& idOut, bool* onRightEdge) const;
 
         bool isSelected (const juce::Uuid& id) const noexcept;
         void setSelection (std::vector<juce::Uuid> newSelection);
         void toggleInSelection (const juce::Uuid& id);
-        void finishBlockDrag();
+        void commit (std::vector<progression::ChordEvent> events, const juce::String& undoName);
+        void endGesture();
         void showContextMenu (const juce::MouseEvent&);
-        void addSlotEvent (int slot, double desiredStart);
+        void addSlotEvent (int slot, int index);
         static int slotFromDescription (const juce::var& description);
 
         void timerCallback() override;   // repaints for the moving playhead, and when the model changed underneath us

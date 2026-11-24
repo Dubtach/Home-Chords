@@ -95,11 +95,11 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
     snapBox.setTooltip ("Timeline snap grid");
     voicingBox.setTooltip ("How chords are spread: Close, Open (drop-2), Wide (open + low root), Piano (low root + close chord)");
     timeSigBox.setTooltip ("Time signature (sets the bar length)");
-    rhythmBox.setTooltip ("Rhythm for every chord on the timeline");
-    bassBox.setTooltip ("Bass note for every chord on the timeline");
-    arpModeBox.setTooltip ("Arpeggio direction for every chord on the timeline");
-    arpRateBox.setTooltip ("Arpeggio speed for every chord on the timeline");
-    gateBox.setTooltip ("Arpeggio gate: how much of each step the note is held");
+    rhythmBox.setTooltip ("Rhythm: the selected chords, or every chord when none is selected");
+    bassBox.setTooltip ("Bass note: the selected chords, or every chord when none is selected");
+    arpModeBox.setTooltip ("Arpeggio direction (selected chords, or all)");
+    arpRateBox.setTooltip ("Arpeggio speed (selected chords, or all)");
+    gateBox.setTooltip ("Arpeggio gate: how much of each step is held (selected chords, or all)");
 
     for (auto* box : { &keyBox, &scaleBox, &timeSigBox, &snapBox, &voicingBox,
                        &rhythmBox, &bassBox, &arpModeBox, &arpRateBox, &gateBox })
@@ -136,7 +136,7 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
     previewKnob.valueText  = [] (double v) { return juce::String (v, 1) + " dB"; };
     tempoKnob.valueText    = [] (double v) { return juce::String (static_cast<int> (v)); };
 
-    for (auto* button : { &settingsButton, &helpButton, &playStopButton, &restartButton, &undoButton, &redoButton,
+    for (auto* button : { &settingsButton, &helpButton, &playStopButton, &restartButton,
                           &presetsButton, &exportButton })
     {
         styleTextButton (*button, homeUI::cyan);
@@ -147,8 +147,6 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
     helpButton.setTooltip ("Shortcuts and gestures");
     playStopButton.setTooltip ("Play / stop the timeline (Space)");
     restartButton.setTooltip ("Back to the start (Home)");
-    undoButton.setTooltip ("Undo (Ctrl/Cmd+Z)");
-    redoButton.setTooltip ("Redo (Ctrl/Cmd+Shift+Z)");
     presetsButton.setTooltip ("Ready-made progressions for this key");
     exportButton.setTooltip ("Save the progression as a MIDI file");
 
@@ -162,8 +160,6 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
 
     playStopButton.onClick = [this] { processor.setSequencePlaying (! processor.sequencePlayer.isPlaying()); };
     restartButton.onClick = [this] { processor.restartSequencer(); };
-    undoButton.onClick = [this] { performUndo(); };
-    redoButton.onClick = [this] { performRedo(); };
 
     addAndMakeVisible (timelineComponent);
     timelineComponent.makeEventFromSlot = [this] (int slot, progression::ChordEvent& out)
@@ -176,11 +172,6 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
     timeSigAttachment      = std::make_unique<ComboBoxAttachment> (processor.apvts, "TIME_SIG", timeSigBox);
     snapAttachment         = std::make_unique<ComboBoxAttachment> (processor.apvts, "SNAP", snapBox);
     voicingAttachment      = std::make_unique<ComboBoxAttachment> (processor.apvts, "VOICING", voicingBox);
-    rhythmAttachment       = std::make_unique<ComboBoxAttachment> (processor.apvts, "RHYTHM", rhythmBox);
-    bassAttachment         = std::make_unique<ComboBoxAttachment> (processor.apvts, "BASS_MODE", bassBox);
-    arpModeAttachment      = std::make_unique<ComboBoxAttachment> (processor.apvts, "ARP_MODE", arpModeBox);
-    arpRateAttachment      = std::make_unique<ComboBoxAttachment> (processor.apvts, "ARP_RATE", arpRateBox);
-    gateAttachment         = std::make_unique<ComboBoxAttachment> (processor.apvts, "GATE", gateBox);
     velocityAttachment     = std::make_unique<SliderAttachment> (processor.apvts, "VELOCITY", velocityKnob);
     previewGainAttachment  = std::make_unique<SliderAttachment> (processor.apvts, "PREVIEW_GAIN", previewKnob);
     tempoAttachment        = std::make_unique<SliderAttachment> (processor.apvts, "TEMPO", tempoKnob);
@@ -191,17 +182,27 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
     syncAttachment         = std::make_unique<ButtonAttachment> (processor.apvts, "SYNC_HOST", syncCheckbox);
     hintsAttachment        = std::make_unique<ButtonAttachment> (processor.apvts, "HINTS", hintsCheckbox);
 
-    // Rhythm / Bass / Arp / Gate are global: choosing one stamps it on every
-    // chord already on the timeline (one undo step). The attachment has
-    // already written the parameter by the time onChange runs.
+    // Rhythm / Bass / Arp / Gate apply to the selected chords, or to all of them
+    // when nothing is selected. They are driven by hand rather than by
+    // attachments, because with a selection they must not touch the parameters.
+    using Field = progression::PlaybackField;
+    rhythmBox.onChange  = [this] { playbackBoxChanged (Field::Rhythm, rhythmBox); };
+    bassBox.onChange    = [this] { playbackBoxChanged (Field::Bass, bassBox); };
+    arpModeBox.onChange = [this] { playbackBoxChanged (Field::ArpMode, arpModeBox); };
+    arpRateBox.onChange = [this] { playbackBoxChanged (Field::ArpRate, arpRateBox); };
+    gateBox.onChange    = [this] { playbackBoxChanged (Field::Gate, gateBox); };
+
     for (auto* box : { &rhythmBox, &bassBox, &arpModeBox, &arpRateBox, &gateBox })
-        box->onChange = [this] { processor.applyPlaybackSettingsToTimeline(); timelineComponent.refreshFromModel(); };
+        box->setTextWhenNothingSelected ("Mixed");
+
+    timelineComponent.onSelectionChanged = [this] { refreshPlaybackControls(); };
 
     processor.apvts.addParameterListener ("KEY", this);
     processor.apvts.addParameterListener ("SCALE", this);
     processor.apvts.addParameterListener ("NOTE_SPELLING", this);
 
     refreshChordCards();
+    refreshPlaybackControls();
 
     // Clicking a control must not steal keyboard focus from the editor, or
     // the chord keys go dead until the next click on the background.
@@ -279,11 +280,8 @@ void HomeChordsAudioProcessorEditor::resized()
         right.removeFromRight (4);
         exportButton.setBounds (right.removeFromRight (52));
         right.removeFromRight (10);
-        redoButton.setBounds (right.removeFromRight (44));
-        right.removeFromRight (4);
-        undoButton.setBounds (right.removeFromRight (44));
 
-        auto left = toolsRow.withRight (undoButton.getX() - 10);
+        auto left = toolsRow.withRight (right.getRight() - 10);
         put (left, playStopButton, 50);
         put (left, restartButton, 28, 8);
         put (left, loopCheckbox, 58, 6);
@@ -298,7 +296,7 @@ void HomeChordsAudioProcessorEditor::resized()
     timelineComponent.setBounds (timelineArea);
 
     // ---- playback row: label | rhythm | bass | arp | rate | gate ----
-    playbackLabelBounds = playbackRow.removeFromLeft (84).toFloat();
+    playbackLabelBounds = playbackRow.removeFromLeft (94).toFloat();
     put (playbackRow, rhythmBox, 104);
     put (playbackRow, bassBox, 118);
     put (playbackRow, arpModeBox, 112);
@@ -368,8 +366,9 @@ void HomeChordsAudioProcessorEditor::paint (juce::Graphics& g)
 
     if (! playbackLabelBounds.isEmpty())
     {
-        homeUI::drawTrackedText (g, "ALL CHORDS", playbackLabelBounds.getX() + 2.0f, playbackLabelBounds.getY(),
-                                 playbackLabelBounds.getHeight(), 72.0f, 8.5f);
+        g.setColour (scopeLabel == "ALL CHORDS" ? juce::Colours::white.withAlpha (0.55f) : homeUI::cyan);
+        homeUI::drawTrackedText (g, scopeLabel, playbackLabelBounds.getX() + 2.0f, playbackLabelBounds.getY(),
+                                 playbackLabelBounds.getHeight(), 74.0f, 8.5f);
     }
 
     if (! footerCardBounds.isEmpty())
@@ -421,6 +420,79 @@ bool HomeChordsAudioProcessorEditor::keyStateChanged (bool /*isKeyDown*/)
     }
 
     return handledAny;
+}
+
+void HomeChordsAudioProcessorEditor::playbackBoxChanged (progression::PlaybackField field, juce::ComboBox& box)
+{
+    if (syncingPlaybackBoxes || box.getSelectedItemIndex() < 0)
+        return;
+
+    processor.applyPlaybackField (field, box.getSelectedItemIndex(), timelineComponent.getSelection());
+    timelineComponent.refreshFromModel();
+    refreshPlaybackControls();
+}
+
+void HomeChordsAudioProcessorEditor::refreshPlaybackControls()
+{
+    using Field = progression::PlaybackField;
+    constexpr Field fields[] = { Field::Rhythm, Field::Bass, Field::ArpMode, Field::ArpRate, Field::Gate };
+
+    // The scope: the selected chords, or every chord when none is selected.
+    const auto& selection = timelineComponent.getSelection();
+    int values[5] = { -2, -2, -2, -2, -2 };   // -2: no chords yet, -1: mixed
+    int inScope = 0;
+    bool anyArpeggio = false;
+
+    for (int i = 0; i < processor.progression.size(); ++i)
+    {
+        const auto& event = processor.progression.getEvent (i);
+
+        if (! selection.empty() && ! progression::layout::containsId (selection, event.id))
+            continue;
+
+        ++inScope;
+        anyArpeggio = anyArpeggio || event.rhythm == progression::RhythmPattern::Arpeggio;
+
+        for (int f = 0; f < 5; ++f)
+        {
+            const int choice = progression::fieldChoice (event, fields[f]);
+            values[f] = (values[f] == -2) ? choice : (values[f] == choice ? choice : -1);
+        }
+    }
+
+    if (inScope == 0)   // nothing to show yet: the defaults new chords will get
+    {
+        static constexpr const char* ids[] = { "RHYTHM", "BASS_MODE", "ARP_MODE", "ARP_RATE", "GATE" };
+
+        for (int f = 0; f < 5; ++f)
+            values[f] = static_cast<int> (processor.apvts.getRawParameterValue (ids[f])->load());
+
+        anyArpeggio = values[0] == static_cast<int> (progression::RhythmPattern::Arpeggio);
+    }
+
+    std::array<int, 8> signature { values[0], values[1], values[2], values[3], values[4], anyArpeggio ? 1 : 0,
+                                   static_cast<int> (selection.size()), inScope > 0 ? 1 : 0 };
+
+    if (signature == playbackSignature)
+        return;
+
+    playbackSignature = signature;
+
+    {
+        const juce::ScopedValueSetter<bool> guard (syncingPlaybackBoxes, true);
+        juce::ComboBox* boxes[] = { &rhythmBox, &bassBox, &arpModeBox, &arpRateBox, &gateBox };
+
+        for (int f = 0; f < 5; ++f)
+            boxes[f]->setSelectedItemIndex (values[f], juce::dontSendNotification);   // -1 shows "Mixed"
+    }
+
+    // Arpeggio direction, speed and gate only mean something for Arpeggio rhythm.
+    for (auto* box : { &arpModeBox, &arpRateBox, &gateBox })
+        box->setVisible (anyArpeggio);
+
+    scopeLabel = selection.empty() ? "ALL CHORDS"
+                                   : juce::String (selection.size()) + (selection.size() == 1 ? " SELECTED" : " SELECTED");
+    repaint (playbackLabelBounds.getSmallestIntegerContainer());
 }
 
 void HomeChordsAudioProcessorEditor::performUndo()
@@ -550,17 +622,17 @@ void HomeChordsAudioProcessorEditor::timerCallback()
     // Drain the "pressed since last tick" slots so the hints can follow them.
     const auto triggered = processor.consumeTriggeredSlots();
 
-    // Content added past the loop end would never be heard: grow the loop to
-    // cover it (never shrinks it), once the gesture that changed it is over.
+    // The loop always spans exactly the chords, whatever changed them (an edit,
+    // undo, a preset): refit it once the gesture that changed things is over.
     const auto revision = processor.progression.getRevision();
     if (revision != lastLoopCheckRevision && ! timelineComponent.isInteracting())
     {
         lastLoopCheckRevision = revision;
-        processor.extendLoopToCoverProgression();
+        processor.fitLoopToProgression();
     }
 
-    undoButton.setEnabled (processor.undoManager.canUndo());
-    redoButton.setEnabled (processor.undoManager.canRedo());
+
+    refreshPlaybackControls();
 
     // With host sync on, the host owns transport, position, tempo and looping.
     const bool hostSync = processor.apvts.getRawParameterValue ("SYNC_HOST")->load() >= 0.5f;

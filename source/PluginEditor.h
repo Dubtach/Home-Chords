@@ -76,8 +76,6 @@ private:
     juce::TextButton helpButton { "?" };
     juce::TextButton playStopButton { "Play" };
     juce::TextButton restartButton { "|<" };
-    juce::TextButton undoButton { "Undo" };
-    juce::TextButton redoButton { "Redo" };
     juce::TextButton presetsButton { "Presets" };
     juce::TextButton exportButton { "Export" };
     homeUI::MidiDragTile dragTile;
@@ -89,7 +87,6 @@ private:
     using ButtonAttachment   = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
     std::unique_ptr<ComboBoxAttachment> keyAttachment, scaleAttachment, timeSigAttachment, snapAttachment, voicingAttachment;
-    std::unique_ptr<ComboBoxAttachment> rhythmAttachment, bassAttachment, arpModeAttachment, arpRateAttachment, gateAttachment;
     std::unique_ptr<SliderAttachment> velocityAttachment, previewGainAttachment, tempoAttachment;
     std::unique_ptr<SliderAttachment> humanizeTimeAttachment, humanizeVelAttachment;
     std::unique_ptr<ButtonAttachment> autoInversionAttachment, loopAttachment, syncAttachment, hintsAttachment;
@@ -129,6 +126,15 @@ private:
     juce::File writeDragFile();
     void updateHints (juce::uint32 triggeredSlots, juce::uint32 activeSlots);
     double snapBeatsFromParam() const;
+
+    // Rhythm / Bass / Arp / Gate act on the selected chords, or on all of them
+    // when nothing is selected; the boxes show what that scope currently has,
+    // and the three arpeggio boxes only appear while they would do something.
+    void playbackBoxChanged (progression::PlaybackField field, juce::ComboBox& box);
+    void refreshPlaybackControls();
+    std::array<int, 8> playbackSignature { -2, -2, -2, -2, -2, -2, -2, -2 };
+    juce::String scopeLabel { "ALL CHORDS" };
+    bool syncingPlaybackBoxes = false;
 
     void performUndo();
     void performRedo();

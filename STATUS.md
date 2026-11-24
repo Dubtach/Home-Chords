@@ -403,6 +403,35 @@ Requested after trying v2; all of it is in this build.
   chooser, host sync, and running inside an actual DAW. Check these in the
   Standalone build and in your host.
 
+## v4 pass — smarter timeline and controls
+
+- **Magnetic timeline.** Chords always sit back to back from beat 0:
+  no overlap, no gaps. Dropping a card inserts it (later chords make room);
+  dragging sideways reorders; the right edge resizes and pushes later chords;
+  deleting (key, menu or dragging out) closes the gap. The loop always spans
+  exactly the chords (0 .. end of last chord) and follows every edit, undo
+  and preset, so the manual loop markers were removed. All of it lives in
+  `Progression/TimelineLayout.h` (pure functions, unit-tested); every gesture
+  is one `SetEventsAction` undo step; drags are previewed without touching
+  the model. Old sessions are packed on load.
+- **Playback controls scoped to the selection.** Rhythm / Bass / Arp mode /
+  Rate / Gate change the selected chords, or all chords when none is
+  selected. The boxes show the scope's common value ("Mixed" otherwise); the
+  Arp mode / rate / gate boxes are shown only when the scope contains an
+  Arpeggio rhythm. These boxes are no longer parameter attachments, so a
+  selection-only change doesn't touch the parameters.
+- **UI:** Undo/Redo buttons removed (shortcuts remain); footer knobs
+  redrawn as compact dials with caption and value beside them; arrow keys
+  move the selection one place.
+- 91 Catch2 cases pass (new: layout, undo action, playback fields). The
+  scripted Xvfb GUI test was rewritten for the new behaviour (drops, mid
+  insert, delete + loop refit, reorder, resize, drag-out delete,
+  selection-scoped style, hide/show of arp boxes, shortcuts, presets).
+- Windows CI: switched to MSVC `cl` (the runner's LLVM 20 is too old for
+  VS 18's STL) and fixed lambda-capture / shadowing issues MSVC reported.
+- **Still not exercised here:** real OS drag-and-drop, on-screen popup
+  menus, DRAG MIDI external drag, host sync, a real DAW, MSVC build.
+
 ## Testing performed
 
 **Read this before trusting anything new in this pass.** (This section is the

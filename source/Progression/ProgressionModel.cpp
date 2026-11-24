@@ -114,6 +114,23 @@ namespace progression
         return true;
     }
 
+    void ProgressionModel::setEvents (std::vector<ChordEvent> newEvents)
+    {
+        for (auto& e : newEvents)
+            if (e.id.isNull())
+                e.id = juce::Uuid();
+
+        std::stable_sort (newEvents.begin(), newEvents.end(),
+                          [] (const ChordEvent& a, const ChordEvent& b) { return a.startBeats < b.startBeats; });
+
+        {
+            const Lock::ScopedLockType sl (lock);
+            events.swap (newEvents);
+        }   // the old events are freed after the lock is released
+
+        markChanged();
+    }
+
     int ProgressionModel::indexOfEvent (const juce::Uuid& id) const
     {
         for (int i = 0; i < size(); ++i)

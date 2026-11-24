@@ -1,5 +1,6 @@
 #include "TimelineComponent.h"
 #include "../MusicTheory/Scale.h"
+#include "../Progression/TimelineLayout.h"
 #include <algorithm>
 #include <cmath>
 
@@ -21,12 +22,18 @@ namespace timeline
 
     // ---- geometry -----------------------------------------------------------
 
+    std::vector<progression::ChordEvent> TimelineComponent::shown() const
+    {
+        return previewActive ? previewEvents : model.getEvents();
+    }
+
     double TimelineComponent::totalTimelineBeats() const noexcept
     {
         if (scaleLockBeats > 0.0)
             return scaleLockBeats;
 
-        return juce::jmax (16.0, model.getTotalLengthBeats(), player.getLoopEndBeats()) + 2.0;
+        // Fit the chords, with one bar of room after the last one to drop onto.
+        return juce::jmax (2.0 * beatsPerBar, model.getTotalLengthBeats() + beatsPerBar);
     }
 
     float TimelineComponent::pixelsPerBeat() const noexcept
@@ -42,11 +49,6 @@ namespace timeline
     int TimelineComponent::beatsToX (double beats) const noexcept
     {
         return static_cast<int> (beats * static_cast<double> (pixelsPerBeat()));
-    }
-
-    double TimelineComponent::snap (double beats) const noexcept
-    {
-        return juce::jmax (0.0, std::round (beats / snapBeats) * snapBeats);
     }
 
     double TimelineComponent::snapDelta (double beats) const noexcept
@@ -69,26 +71,27 @@ namespace timeline
         return { x, top, width, height };
     }
 
-    const progression::ChordEvent* TimelineComponent::eventAt (int x, int y, bool* onRightEdge) const noexcept
+    bool TimelineComponent::eventAt (int x, int y, juce::Uuid& idOut, bool* onRightEdge) const
     {
         if (y < static_cast<int> (rulerHeight + loopMarkerHeight))
-            return nullptr;
+            return false;
 
-        for (int i = model.size() - 1; i >= 0; --i)   // topmost (latest) first
+        for (const auto& event : shown())
         {
-            const auto& event = model.getEvent (i);
             const auto bounds = blockBoundsFor (event);
 
             if (bounds.contains (static_cast<float> (x), static_cast<float> (y)))
             {
+                idOut = event.id;
+
                 if (onRightEdge != nullptr)
                     *onRightEdge = (static_cast<float> (x) > bounds.getRight() - 7.0f);
 
-                return &event;
+                return true;
             }
         }
 
-        return nullptr;
+        return false;
     }
 
     // ---- selection ----------------------------------------------------------
@@ -162,10 +165,11 @@ namespace timeline
                         juce::Justification::centredLeft, false);
         }
 
-        // Loop region shading + handles.
+        // Loop region: always exactly the chords, so it is shaded, not draggable.
         {
-            const auto loopX0 = static_cast<float> (beatsToX (player.getLoopStartBeats()));
-            const auto loopX1 = static_cast<float> (beatsToX (player.getLoopEndBeats()));
+            const auto loopX0 = static_cast<float> (beatsToX (0.0));
+            const auto loopX1 = static_cast<float> (beatsToX (previewActive ? progression::layout::totalLength (previewEvents)
+                                                                            : model.getTotalLengthBeats()));
 
             g.setColour (homeUI::cyan.withAlpha (0.07f));
             g.fillRect (juce::Rectangle<float> (loopX0, gridTop, loopX1 - loopX0, bottom - gridTop));
@@ -176,12 +180,12 @@ namespace timeline
         }
 
         // Chord blocks.
-        const bool removing = dragOutside && draggingBody;
+        const bool removing = dragOutside && draggingBody;   // the preview already has the chords taken out
 
-        for (int i = 0; i < model.size(); ++i)
+        for (const auto& event : shown())
         {
-            const auto& event = model.getEvent (i);
             const auto bounds = blockBoundsFor (event);
+            const bool isGhost = (event.id == ghostId);
 
             juce::Colour accent = homeUI::green;
             switch (event.quality)
@@ -194,18 +198,24 @@ namespace timeline
             }
 
             const bool isSel = isSelected (event.id);
-            const bool doomed = removing && isSel;
-
-            if (doomed)
-                accent = homeUI::warn;
 
             g.saveState();
-            if (doomed)
+            if (isGhost)
                 g.setOpacity (0.55f);
 
             homeUI::drawCard (g, bounds.reduced (1.5f), isSel ? accent.brighter (0.3f) : accent.darker (event.enabled ? 0.0f : 0.5f));
 
-            if (isSel)
+            if (isGhost)
+            {
+                juce::Path outline;
+                outline.addRoundedRectangle (bounds.reduced (1.5f), 6.0f);
+                juce::Path dashed;
+                const float dashes[] = { 5.0f, 4.0f };
+                juce::PathStrokeType (1.5f).createDashedStroke (dashed, outline, dashes, 2);
+                g.setColour (juce::Colours::white.withAlpha (0.9f));
+                g.fillPath (dashed);
+            }
+            else if (isSel)
             {
                 g.setColour (juce::Colours::white.withAlpha (0.9f));
                 g.drawRoundedRectangle (bounds.reduced (1.5f), 6.0f, 2.0f);
@@ -218,27 +228,6 @@ namespace timeline
             auto content = bounds.reduced (5.0f, 3.0f);
             homeUI::drawCardText (g, chordName, content, juce::jmin (15.0f, content.getHeight() * 0.5f));
             g.restoreState();
-        }
-
-        // Card-drop preview: a ghost block where the chord would land.
-        if (dropBeat >= 0.0)
-        {
-            const double start = model.findFreeStart (dropBeat, dropLength);
-            progression::ChordEvent ghost;
-            ghost.startBeats = start;
-            ghost.lengthBeats = dropLength;
-
-            const auto bounds = blockBoundsFor (ghost).reduced (1.5f);
-            g.setColour (juce::Colours::white.withAlpha (0.14f));
-            g.fillRoundedRectangle (bounds, 6.0f);
-
-            juce::Path outline;
-            outline.addRoundedRectangle (bounds, 6.0f);
-            juce::Path dashed;
-            const float dashes[] = { 5.0f, 4.0f };
-            juce::PathStrokeType (1.5f).createDashedStroke (dashed, outline, dashes, 2);
-            g.setColour (juce::Colours::white.withAlpha (0.85f));
-            g.fillPath (dashed);
         }
 
         // Playhead.
@@ -269,11 +258,11 @@ namespace timeline
             g.setFont (homeUI::font (11.0f));
             g.drawText ("Release to remove", pill, juce::Justification::centred, false);
         }
-        else if (model.isEmpty() && dropBeat < 0.0)
+        else if (model.isEmpty() && ! previewActive)
         {
             g.setFont (homeUI::font (11.0f, false));
             g.setColour (juce::Colours::white.withAlpha (0.38f));
-            g.drawText ("Drag chords here from the cards above   (double-click a card to append it)",
+            g.drawText ("Drag chords here from the cards above   (or double-click a card)",
                         getLocalBounds(), juce::Justification::centred, false);
         }
     }
@@ -295,59 +284,28 @@ namespace timeline
             return;
         }
 
-        const auto loopX0 = static_cast<float> (beatsToX (player.getLoopStartBeats()));
-        const auto loopX1 = static_cast<float> (beatsToX (player.getLoopEndBeats()));
-
-        if (y < static_cast<int> (loopMarkerHeight + 4.0f))
-        {
-            if (std::abs (static_cast<float> (x) - loopX0) < 7.0f)
-            {
-                draggingLoopStart = true;
-                return;
-            }
-
-            if (std::abs (static_cast<float> (x) - loopX1) < 7.0f)
-            {
-                draggingLoopEnd = true;
-                return;
-            }
-        }
-
+        juce::Uuid foundId;
         bool onRightEdge = false;
-        const auto* found = eventAt (x, y, &onRightEdge);
+        const bool found = eventAt (x, y, foundId, &onRightEdge);
         const bool additive = event.mods.isShiftDown() || event.mods.isCommandDown() || event.mods.isCtrlDown();
 
-        if (found != nullptr)
+        if (found)
         {
-            const auto id = found->id;
-
             if (additive)
             {
-                toggleInSelection (id);
+                toggleInSelection (foundId);
 
-                if (! isSelected (id))
+                if (! isSelected (foundId))
                     return;   // it was just removed from the selection: nothing to drag
             }
-            else if (! isSelected (id))
+            else if (! isSelected (foundId))
             {
-                setSelection ({ id });
+                setSelection ({ foundId });
             }
 
-            dragItems.clear();
-
-            for (const auto& selectedId : selection)
-            {
-                const auto index = model.indexOfEvent (selectedId);
-
-                if (index >= 0)
-                {
-                    const auto& e = model.getEvent (index);
-                    dragItems.push_back ({ e.id, e.startBeats, e.lengthBeats });
-                }
-            }
-
+            dragIds = selection;
+            dragOriginal = model.getEvents();
             dragStartMouseX = x;
-            dragDeltaBeats = 0.0;
             dragOutside = false;
             draggingRightEdge = onRightEdge;
             draggingBody = ! onRightEdge;
@@ -374,22 +332,6 @@ namespace timeline
 
     void TimelineComponent::mouseDrag (const juce::MouseEvent& event)
     {
-        if (draggingLoopStart)
-        {
-            const double beats = juce::jmin (snap (xToBeats (event.x)), player.getLoopEndBeats() - snapBeats);
-            player.setLoopRange (juce::jmax (0.0, beats), player.getLoopEndBeats());
-            repaint();
-            return;
-        }
-
-        if (draggingLoopEnd)
-        {
-            const double minEnd = player.getLoopStartBeats() + snapBeats;
-            player.setLoopRange (player.getLoopStartBeats(), juce::jmax (minEnd, snap (xToBeats (event.x))));
-            repaint();
-            return;
-        }
-
         if (marqueeActive)
         {
             const auto here = event.getPosition();
@@ -402,10 +344,8 @@ namespace timeline
 
             auto next = selectionBeforeMarquee;
 
-            for (int i = 0; i < model.size(); ++i)
+            for (const auto& e : model.getEvents())
             {
-                const auto& e = model.getEvent (i);
-
                 if (blockBoundsFor (e).intersects (marqueeRect.toFloat())
                     && std::find (next.begin(), next.end(), e.id) == next.end())
                     next.push_back (e.id);
@@ -418,118 +358,93 @@ namespace timeline
 
         if (draggingBody)
         {
-            double delta = snapDelta (xToBeats (event.x) - xToBeats (dragStartMouseX));
-
-            // Don't let the earliest chord go before beat 0.
-            double earliest = std::numeric_limits<double>::max();
-            for (const auto& item : dragItems)
-                earliest = juce::jmin (earliest, item.startBeats);
-
-            delta = juce::jmax (delta, -earliest);
-            dragDeltaBeats = delta;
             dragOutside = isOutside (event.getPosition());
 
-            for (const auto& item : dragItems)
-                model.moveEvent (item.id, item.startBeats + delta);
+            if (dragOutside)
+                previewEvents = progression::layout::without (dragOriginal, dragIds);
+            else
+                previewEvents = progression::layout::moveGroup (dragOriginal, dragIds, xToBeats (event.x));
 
+            previewActive = true;
             repaint();
         }
         else if (draggingRightEdge)
         {
             const double delta = snapDelta (xToBeats (event.x) - xToBeats (dragStartMouseX));
-            dragDeltaBeats = delta;
 
-            for (const auto& item : dragItems)
-                model.resizeEvent (item.id, juce::jmax (snapBeats, item.lengthBeats + delta));
+            previewEvents = progression::layout::resized (dragOriginal, dragIds, [this, delta] (const progression::ChordEvent& e)
+            {
+                return juce::jmax (snapBeats, e.lengthBeats + delta);
+            });
 
+            previewActive = true;
             repaint();
         }
     }
 
-    void TimelineComponent::finishBlockDrag()
+    void TimelineComponent::commit (std::vector<progression::ChordEvent> events, const juce::String& undoName)
     {
-        // Put every block back where it started (bypassing undo) so the
-        // actions below capture the true "before" state, then apply the whole
-        // gesture as one undo step.
-        std::vector<progression::ChordEvent> finals;
+        progression::layout::assignContiguous (events);
 
-        for (const auto& item : dragItems)
-        {
-            const auto index = model.indexOfEvent (item.id);
-
-            if (index < 0)
-                continue;
-
-            auto liveState = model.getEvent (index);
-            model.moveEvent (item.id, item.startBeats);
-            model.resizeEvent (item.id, item.lengthBeats);
-            finals.push_back (liveState);
-        }
-
-        if (finals.empty())
+        if (progression::layout::sameLayout (events, model.getEvents()))
             return;
 
-        if (draggingBody && dragOutside)
-        {
-            undoManager.beginNewTransaction (finals.size() > 1 ? "Delete chords" : "Delete chord");
-
-            for (const auto& e : finals)
-                undoManager.perform (new progression::RemoveChordAction (model, e.id));
-
-            setSelection ({});
-            return;
-        }
-
-        bool changed = false;
-
-        for (size_t i = 0; i < finals.size(); ++i)
-        {
-            const auto& item = dragItems[i];
-            changed = changed || ! juce::approximatelyEqual (finals[i].startBeats, item.startBeats)
-                              || ! juce::approximatelyEqual (finals[i].lengthBeats, item.lengthBeats);
-        }
-
-        if (! changed)
-            return;
-
-        undoManager.beginNewTransaction (draggingBody ? "Move chords" : "Resize chords");
-
-        for (const auto& e : finals)
-            undoManager.perform (new progression::UpdateChordAction (model, e.id, e));
+        undoManager.beginNewTransaction (undoName);
+        undoManager.perform (new progression::SetEventsAction (model, std::move (events)));
     }
 
-    void TimelineComponent::mouseUp (const juce::MouseEvent&)
+    void TimelineComponent::endGesture()
     {
-        if (draggingBody || draggingRightEdge)
-            finishBlockDrag();
+        if (previewActive && (draggingBody || draggingRightEdge))
+        {
+            auto result = previewEvents;
 
+            if (draggingBody && dragOutside)
+            {
+                commit (std::move (result), dragIds.size() > 1 ? "Delete chords" : "Delete chord");
+                setSelection ({});
+            }
+            else
+            {
+                commit (std::move (result), draggingBody ? "Move chords" : "Resize chords");
+            }
+        }
+
+        previewActive = false;
+        previewEvents.clear();
+        ghostId = juce::Uuid::null();
         draggingBody = false;
         draggingRightEdge = false;
-        draggingLoopStart = false;
-        draggingLoopEnd = false;
         dragOutside = false;
         marqueeActive = false;
         marqueeMoved = false;
         marqueeRect = {};
-        dragItems.clear();
+        dragIds.clear();
+        dragOriginal.clear();
         scaleLockBeats = 0.0;
         interacting = false;
+    }
+
+    void TimelineComponent::mouseUp (const juce::MouseEvent&)
+    {
+        endGesture();
         repaint();
     }
 
     void TimelineComponent::mouseMove (const juce::MouseEvent& event)
     {
+        juce::Uuid id;
         bool onRightEdge = false;
-        const auto* found = eventAt (event.x, event.y, &onRightEdge);
-        setMouseCursor (found != nullptr && onRightEdge ? juce::MouseCursor::LeftRightResizeCursor
-                                                         : juce::MouseCursor::NormalCursor);
+        const bool found = eventAt (event.x, event.y, id, &onRightEdge);
+        setMouseCursor (found && onRightEdge ? juce::MouseCursor::LeftRightResizeCursor
+                                             : juce::MouseCursor::NormalCursor);
     }
 
     void TimelineComponent::showContextMenu (const juce::MouseEvent& event)
     {
-        if (const auto* found = eventAt (event.x, event.y, nullptr))
-            if (! isSelected (found->id))
-                setSelection ({ found->id });
+        juce::Uuid foundId;
+        if (eventAt (event.x, event.y, foundId, nullptr) && ! isSelected (foundId))
+            setSelection ({ foundId });
 
         juce::PopupMenu menu;
         menu.addItem (1, "Delete", hasSelection());
@@ -565,10 +480,8 @@ namespace timeline
         if (selection.empty())
             return;
 
-        undoManager.beginNewTransaction (selection.size() > 1 ? "Delete chords" : "Delete chord");
-
-        for (const auto& id : selection)
-            undoManager.perform (new progression::RemoveChordAction (model, id));
+        commit (progression::layout::without (model.getEvents(), selection),
+                selection.size() > 1 ? "Delete chords" : "Delete chord");
 
         setSelection ({});
         repaint();
@@ -579,39 +492,29 @@ namespace timeline
         if (selection.empty())
             return;
 
-        // The copies go right after the selected group, keeping their spacing.
-        double groupStart = std::numeric_limits<double>::max(), groupEnd = 0.0;
-        std::vector<progression::ChordEvent> originals;
+        // The copies go right after the last selected chord.
+        const auto events = model.getEvents();
+        auto copies = progression::layout::extract (events, selection);
 
-        for (const auto& id : selection)
-        {
-            const auto index = model.indexOfEvent (id);
-
-            if (index < 0)
-                continue;
-
-            originals.push_back (model.getEvent (index));
-            groupStart = juce::jmin (groupStart, originals.back().startBeats);
-            groupEnd = juce::jmax (groupEnd, originals.back().endBeats());
-        }
-
-        if (originals.empty())
+        if (copies.empty())
             return;
 
-        const double shift = groupEnd - groupStart;
+        int after = 0;
+        for (size_t i = 0; i < events.size(); ++i)
+            if (progression::layout::containsId (selection, events[i].id))
+                after = static_cast<int> (i) + 1;
+
         std::vector<juce::Uuid> newSelection;
 
-        undoManager.beginNewTransaction (originals.size() > 1 ? "Duplicate chords" : "Duplicate chord");
-
-        for (auto copy : originals)
+        for (auto& copy : copies)
         {
             copy.id = juce::Uuid();
-            copy.startBeats += shift;
             newSelection.push_back (copy.id);
-            undoManager.perform (new progression::AddChordAction (model, copy));
         }
 
-        // AddChordAction keeps a non-null id, so the new ids are the ones we made.
+        commit (progression::layout::insertAt (events, copies, after),
+                copies.size() > 1 ? "Duplicate chords" : "Duplicate chord");
+
         setSelection (std::move (newSelection));
         repaint();
     }
@@ -621,53 +524,13 @@ namespace timeline
         if (selection.empty() || juce::approximatelyEqual (deltaBeats, 0.0))
             return;
 
-        std::vector<progression::ChordEvent> states;
-        double earliest = std::numeric_limits<double>::max();
-
-        for (const auto& id : selection)
-        {
-            const auto index = model.indexOfEvent (id);
-
-            if (index >= 0)
-            {
-                states.push_back (model.getEvent (index));
-                earliest = juce::jmin (earliest, states.back().startBeats);
-            }
-        }
-
-        if (states.empty())
-            return;
-
-        deltaBeats = juce::jmax (deltaBeats, -earliest);
-
-        if (juce::approximatelyEqual (deltaBeats, 0.0))
-            return;
-
-        undoManager.beginNewTransaction ("Nudge chords");
-
-        for (auto e : states)
-        {
-            e.startBeats += deltaBeats;
-            undoManager.perform (new progression::UpdateChordAction (model, e.id, e));
-        }
-
+        commit (progression::layout::shiftGroup (model.getEvents(), selection, deltaBeats < 0.0 ? -1 : 1), "Move chords");
         repaint();
     }
 
     void TimelineComponent::copySelected()
     {
-        clipboard.clear();
-
-        for (const auto& id : selection)
-        {
-            const auto index = model.indexOfEvent (id);
-
-            if (index >= 0)
-                clipboard.push_back (model.getEvent (index));
-        }
-
-        std::sort (clipboard.begin(), clipboard.end(),
-                   [] (const auto& a, const auto& b) { return a.startBeats < b.startBeats; });
+        clipboard = progression::layout::extract (model.getEvents(), selection);
     }
 
     void TimelineComponent::pasteAtEnd()
@@ -675,19 +538,18 @@ namespace timeline
         if (clipboard.empty())
             return;
 
-        const double origin = clipboard.front().startBeats;
-        const double base = model.getTotalLengthBeats();
+        auto pasted = clipboard;
         std::vector<juce::Uuid> newSelection;
 
-        undoManager.beginNewTransaction (clipboard.size() > 1 ? "Paste chords" : "Paste chord");
-
-        for (auto copy : clipboard)
+        for (auto& copy : pasted)
         {
             copy.id = juce::Uuid();
-            copy.startBeats = base + (copy.startBeats - origin);
             newSelection.push_back (copy.id);
-            undoManager.perform (new progression::AddChordAction (model, copy));
         }
+
+        auto events = model.getEvents();
+        commit (progression::layout::insertAt (events, pasted, static_cast<int> (events.size())),
+                pasted.size() > 1 ? "Paste chords" : "Paste chord");
 
         setSelection (std::move (newSelection));
         repaint();
@@ -724,46 +586,58 @@ namespace timeline
         if (makeEventFromSlot != nullptr && makeEventFromSlot (slotFromDescription (details.description), preview))
             dropLength = preview.lengthBeats;
 
+        ghostId = juce::Uuid();
         itemDragMove (details);
     }
 
     void TimelineComponent::itemDragMove (const SourceDetails& details)
     {
-        // The ghost's left edge sits under the cursor, snapped to the grid.
-        dropBeat = snap (xToBeats (details.localPosition.x));
+        const auto events = model.getEvents();
+
+        progression::ChordEvent ghost;
+        ghost.id = ghostId;
+        ghost.lengthBeats = dropLength;
+
+        // The chords after the pointer move over to make room.
+        previewEvents = progression::layout::insertAt (events, { ghost },
+                                                       progression::layout::insertionIndex (events, xToBeats (details.localPosition.x)));
+        previewActive = true;
         repaint();
     }
 
     void TimelineComponent::itemDragExit (const SourceDetails&)
     {
-        dropBeat = -1.0;
+        previewActive = false;
+        previewEvents.clear();
+        ghostId = juce::Uuid::null();
         scaleLockBeats = 0.0;
         interacting = false;
         repaint();
     }
 
-    void TimelineComponent::addSlotEvent (int slot, double desiredStart)
+    void TimelineComponent::addSlotEvent (int slot, int index)
     {
         progression::ChordEvent event;
 
         if (makeEventFromSlot == nullptr || ! makeEventFromSlot (slot, event))
             return;
 
-        event.startBeats = model.findFreeStart (desiredStart, event.lengthBeats);
-
-        undoManager.beginNewTransaction ("Add chord");
-        undoManager.perform (new progression::AddChordAction (model, event));
+        event.id = juce::Uuid();
+        commit (progression::layout::insertAt (model.getEvents(), { event }, index), "Add chord");
         setSelection ({ event.id });
     }
 
     void TimelineComponent::itemDropped (const SourceDetails& details)
     {
-        const double start = snap (xToBeats (details.localPosition.x));
-        dropBeat = -1.0;
+        const int index = progression::layout::insertionIndex (model.getEvents(), xToBeats (details.localPosition.x));
+
+        previewActive = false;
+        previewEvents.clear();
+        ghostId = juce::Uuid::null();
         scaleLockBeats = 0.0;
         interacting = false;
 
-        addSlotEvent (slotFromDescription (details.description), start);
+        addSlotEvent (slotFromDescription (details.description), index);
         repaint();
     }
 

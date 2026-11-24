@@ -62,6 +62,12 @@ namespace progression
         // rhythm, bass, ...) with a single undoable action type.
         bool replaceEvent (const juce::Uuid& id, ChordEvent newState);
 
+        // Whole-list access, for edits that rearrange several chords at once
+        // (see TimelineLayout.h). setEvents keeps the given order as long as
+        // it is sorted by start; it sorts defensively otherwise.
+        std::vector<ChordEvent> getEvents() const { return events; }
+        void setEvents (std::vector<ChordEvent> newEvents);
+
         int indexOfEvent (const juce::Uuid& id) const;
         void clear() noexcept;
 

@@ -101,6 +101,35 @@ namespace progression
         ChordEvent newState, oldState;
     };
 
+    // Replaces the whole event list (and restores it on undo). Every layout
+    // edit -- reorder, resize, delete with the gap closing up -- is one of these,
+    // so a gesture is always exactly one undo step.
+    class SetEventsAction : public juce::UndoableAction
+    {
+    public:
+        SetEventsAction (ProgressionModel& modelIn, std::vector<ChordEvent> newEventsIn)
+            : model (modelIn), newEvents (std::move (newEventsIn))
+        {
+        }
+
+        bool perform() override
+        {
+            oldEvents = model.getEvents();
+            model.setEvents (newEvents);
+            return true;
+        }
+
+        bool undo() override
+        {
+            model.setEvents (oldEvents);
+            return true;
+        }
+
+    private:
+        ProgressionModel& model;
+        std::vector<ChordEvent> newEvents, oldEvents;
+    };
+
     class ClearProgressionAction : public juce::UndoableAction
     {
     public:
