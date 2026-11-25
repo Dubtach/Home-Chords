@@ -89,7 +89,7 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
     rhythmBox.addItemList ({ "Sustained", "Whole", "Half", "Quarter", "Eighth", "Sixteenth", "Strum", "Arpeggio" }, 1);
     bassBox.addItemList ({ "Bass: Root", "Bass: Third", "Bass: Fifth", "Bass: Inversion" }, 1);
     arpModeBox.addItemList ({ "Arp: Off", "Arp: Up", "Arp: Down", "Arp: Up/Down", "Arp: Random" }, 1);
-    arpRateBox.addItemList ({ "1/4", "1/8", "1/16", "1/32" }, 1);
+    arpRateBox.addItemList ({ "Rate 1/4", "Rate 1/8", "Rate 1/16", "Rate 1/32" }, 1);
     gateBox.addItemList ({ "Gate 25%", "Gate 50%", "Gate 80%", "Legato" }, 1);
 
     snapBox.setTooltip ("Timeline snap grid");
@@ -304,8 +304,8 @@ void HomeChordsAudioProcessorEditor::resized()
     playbackLabelBounds = playbackRow.removeFromLeft (94).toFloat();
     put (playbackRow, rhythmBox, 124);
     put (playbackRow, arpModeBox, 112);
-    put (playbackRow, arpRateBox, 58);
-    put (playbackRow, gateBox, 94);
+    put (playbackRow, arpRateBox, 104);
+    put (playbackRow, gateBox, 108);
 
     // ---- footer: octave | checkboxes | five knobs ----
     footerCardBounds = footer.toFloat();

@@ -14,11 +14,13 @@
 // chords always sit back to back from beat 0 -- they can't overlap and can't
 // leave a gap -- and the loop always spans exactly the chords.
 //
-//   * Drop a chord card on it to insert that chord where you let go; the chords
-//     after it make room.
+//   * Drop a chord card on the middle of a chord to REPLACE it (it keeps its
+//     length and style), or near a chord's edge / after the last chord to INSERT
+//     it there -- the chords after it make room. Hold Shift to always insert.
 //   * Click a block to select it; shift/ctrl/cmd-click adds to the selection;
 //     drag on empty space to rubber-band select several.
-//   * Drag the selection sideways to reorder it; drag the right edge of a block
+//   * Drag the selection sideways to reorder it (it lands in the gap its left
+//     edge is nearest, so a long chord needs no extra travel); drag the right edge of a block
 //     to resize the whole selection (later chords shift to follow); drag it out
 //     of the strip (above, below or off the side) and let go to delete it --
 //     the gap closes up.
@@ -151,6 +153,8 @@ namespace timeline
 
         // While dragging blocks they float under the pointer; the slot they will land in stays open.
         juce::Point<int> dragOffset;
+        double dragGroupStart = 0.0;      // where the dragged group's left edge started, in beats
+        juce::Uuid replaceId;             // card drop: the chord that would be replaced (null = inserting)
 
         std::vector<progression::ChordEvent> shown() const;   // the preview while a gesture runs, else the model
         double totalTimelineBeats() const noexcept;
@@ -170,7 +174,6 @@ namespace timeline
         void endGesture();
         void showContextMenu (const juce::MouseEvent&);
         void drawBlock (juce::Graphics&, const progression::ChordEvent&, juce::Rectangle<float> bounds, bool selected, bool floating, bool slot, bool ghost) const;
-        void addSlotEvent (int slot, int index);
         static int slotFromDescription (const juce::var& description);
 
         void timerCallback() override;   // repaints for the moving playhead, and when the model changed underneath us

@@ -74,18 +74,18 @@ TEST_CASE ("removing a middle chord closes the gap", "[layout]")
     CHECK (layout::totalLength (after) == 10.0);
 }
 
-TEST_CASE ("moveGroup reorders by pointer position", "[layout]")
+TEST_CASE ("moveGroup reorders by the block's left edge", "[layout]")
 {
-    const auto events = makeRow ({ 4, 4, 4, 4 });   // midpoints 2, 6, 10, 14
+    const auto events = makeRow ({ 4, 4, 4, 4 });   // boundaries 0, 4, 8, 12, 16
 
-    SECTION ("drop past the last midpoint puts the chord last")
+    SECTION ("left edge near the end puts the chord last")
     {
         const auto moved = layout::moveGroup (events, { events[0].id }, 15.0);
         CHECK (roots (moved) == std::vector<int> { 1, 2, 3, 0 });
         CHECK (isPacked (moved));
     }
 
-    SECTION ("drop before the first midpoint puts the chord first")
+    SECTION ("left edge near zero puts the chord first")
     {
         const auto moved = layout::moveGroup (events, { events[3].id }, 1.0);
         CHECK (roots (moved) == std::vector<int> { 3, 0, 1, 2 });
@@ -100,9 +100,110 @@ TEST_CASE ("moveGroup reorders by pointer position", "[layout]")
 
     SECTION ("dropping where it already is changes nothing")
     {
-        const auto moved = layout::moveGroup (events, { events[1].id }, 6.0);
+        const auto moved = layout::moveGroup (events, { events[1].id }, 4.0);
         CHECK (layout::sameLayout (moved, events));
     }
+}
+
+TEST_CASE ("a long chord reaches the start without dragging past it", "[layout]")
+{
+    const auto events = makeRow ({ 4, 4, 12 });   // the last chord starts at 8 and is 12 beats long
+
+    // Its left edge is 8 beats from the start; moving it 8 beats left (edge at 0) is enough.
+    const auto moved = layout::moveGroup (events, { events[2].id }, 8.0 - 8.0);
+    CHECK (roots (moved) == std::vector<int> { 2, 0, 1 });
+
+    // Moving it only 5 beats left (edge at 3, nearer the 4 boundary than 0) puts it second.
+    CHECK (roots (layout::moveGroup (events, { events[2].id }, 3.0)) == std::vector<int> { 0, 2, 1 });
+}
+
+TEST_CASE ("slotForLeftEdge picks the nearest boundary", "[layout]")
+{
+    const auto events = makeRow ({ 4, 2, 6 });   // boundaries 0, 4, 6, 12
+
+    CHECK (layout::slotForLeftEdge (events, -3.0) == 0);
+    CHECK (layout::slotForLeftEdge (events, 1.9) == 0);
+    CHECK (layout::slotForLeftEdge (events, 2.1) == 1);
+    CHECK (layout::slotForLeftEdge (events, 5.1) == 2);
+    CHECK (layout::slotForLeftEdge (events, 8.9) == 2);
+    CHECK (layout::slotForLeftEdge (events, 9.1) == 3);
+    CHECK (layout::slotForLeftEdge (events, 50.0) == 3);
+    CHECK (layout::slotForLeftEdge ({}, 5.0) == 0);
+}
+
+TEST_CASE ("card drops replace in the middle and insert at the edges", "[layout][drop]")
+{
+    const auto events = makeRow ({ 4, 4, 4 });   // chords at 0-4, 4-8, 8-12
+
+    SECTION ("the middle half of a chord replaces it")
+    {
+        const auto t = layout::dropTargetAt (events, 6.0);
+        CHECK (t.replace);
+        CHECK (t.index == 1);
+        CHECK (layout::dropTargetAt (events, 5.0).replace);   // exactly the 25% mark
+        CHECK (layout::dropTargetAt (events, 7.0).replace);   // exactly the 75% mark
+    }
+
+    SECTION ("near a chord's edge inserts before or after it")
+    {
+        auto t = layout::dropTargetAt (events, 4.5);
+        CHECK (! t.replace);
+        CHECK (t.index == 1);   // left quarter of chord 1: before it
+
+        t = layout::dropTargetAt (events, 7.5);
+        CHECK (! t.replace);
+        CHECK (t.index == 2);   // right quarter of chord 1: after it
+    }
+
+    SECTION ("after the last chord appends; before zero prepends")
+    {
+        CHECK (layout::dropTargetAt (events, 20.0).index == 3);
+        CHECK (! layout::dropTargetAt (events, 20.0).replace);
+        CHECK (layout::dropTargetAt (events, -2.0).index == 0);
+        CHECK (layout::dropTargetAt (events, 0.2).index == 0);    // left quarter of the first chord
+        CHECK (layout::dropTargetAt (events, 11.8).index == 3);   // right quarter of the last chord
+    }
+
+    SECTION ("an empty timeline always inserts at 0")
+    {
+        const auto t = layout::dropTargetAt ({}, 3.0);
+        CHECK (! t.replace);
+        CHECK (t.index == 0);
+    }
+
+    SECTION ("forceInsert never replaces")
+    {
+        const auto t = layout::dropTargetAt (events, 6.0, true);
+        CHECK (! t.replace);
+    }
+}
+
+TEST_CASE ("replacing keeps place, length and playback style", "[layout][drop]")
+{
+    auto events = makeRow ({ 4, 6 });
+    events[1].rhythm = RhythmPattern::Arpeggio;
+    events[1].arpMode = ArpMode::UpDown;
+    events[1].velocity = 77;
+
+    ChordEvent incoming;
+    incoming.id = juce::Uuid();
+    incoming.rootPitchClass = 9;
+    incoming.quality = musictheory::ChordQuality::Minor;
+    incoming.scaleDegree = 5;
+    incoming.lengthBeats = 2.0;
+    incoming.rhythm = RhythmPattern::Quarter;
+
+    const auto replaced = layout::withChordOf (events[1], incoming);
+
+    CHECK (replaced.id == events[1].id);
+    CHECK (replaced.startBeats == events[1].startBeats);
+    CHECK (replaced.lengthBeats == 6.0);
+    CHECK (replaced.rhythm == RhythmPattern::Arpeggio);
+    CHECK (replaced.arpMode == ArpMode::UpDown);
+    CHECK (replaced.velocity == 77);
+    CHECK (replaced.rootPitchClass == 9);
+    CHECK (replaced.quality == musictheory::ChordQuality::Minor);
+    CHECK (replaced.scaleDegree == 5);
 }
 
 TEST_CASE ("shiftGroup moves a chord one place and stops at the ends", "[layout]")

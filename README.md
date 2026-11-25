@@ -81,13 +81,18 @@ tests/                    Catch2 unit tests.
 - **Right-click a chord card** — Quality, Extension, and **Borrowed chord**
   (bIII, iv, bVI, bVII, V/V ... for the key). The card changes to that
   chord; "Reset to diatonic" undoes it. Overridden cards show a dot.
-- **Drag a chord card onto the timeline** to insert it where you drop it;
-  the chords after it make room. Double-click a card to append it.
+- **Drag a chord card onto the timeline** — where you let go decides what
+  happens. Drop on the **middle** of a chord to **replace** it (it keeps its
+  length and playback style; a REPLACE tag shows). Drop near a chord's **edge**,
+  or in the empty space after the last chord, to **insert** it there (an INSERT
+  ghost opens a slot and the later chords make room). Hold **Shift** to always
+  insert. Double-click a card to append it.
 - **Timeline** — a gap-free track: chords sit back to back from the start,
   never overlap, and the loop always spans exactly the chords (so deleting
   or adding never needs a manual loop fix). Click a block to select;
   shift/ctrl/cmd-click to add to the selection; drag on empty space to
-  rubber-band select; drag blocks sideways to reorder, the right edge to
+  rubber-band select; drag blocks sideways to reorder (a block lands in the gap its *left edge*
+  is nearest, so even a long chord reaches the start with no extra travel), the right edge to
   resize (later chords shift along); drag blocks out of the strip and
   release to delete (the gap closes); right-click for Delete / Duplicate /
   Copy / Paste.

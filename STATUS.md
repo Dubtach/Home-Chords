@@ -472,6 +472,25 @@ Requested after trying v2; all of it is in this build.
 - **Moved:** Export and DRAG MIDI to the header beside Key/Scale; Presets
   to the right end of the tools row.
 
+## v7 pass — drag and drop
+
+- **Reorder by left edge.** The dragged block lands in the gap its left edge is
+  nearest (`slotForLeftEdge`), not where the pointer is, so a long chord needs
+  no extra travel to reach the start; the floating block keeps the grab point
+  under the pointer.
+- **Card drops: replace or insert.** `dropTargetAt`: the middle half of a chord
+  replaces it (keeps id, position, length and playback style; takes the new
+  chord's degree/root/quality/extension); the outer quarters insert before /
+  after it; past the last chord appends; Shift forces insert. Previews: REPLACE
+  tag on the target, or a dashed INSERT ghost with the later chords moved.
+- Bug found by the GUI test while building this: `commit()` skipped edits that
+  left the layout unchanged, which silently ignored a replace; it now also
+  compares chord identity.
+- Arp rate stepper was too narrow (58 px: the value was clipped to nothing
+  between the arrows); widened to 104 px with "Rate 1/8" style labels.
+- 100 Catch2 cases pass; scripted GUI test covers replace, insert, append,
+  left-edge reorder and the arp rate.
+
 ## Testing performed
 
 **Read this before trusting anything new in this pass.** (This section is the

@@ -237,7 +237,34 @@ namespace timeline
         {
             const bool isGhost = (event.id == ghostId);
             const bool isSlot = dragging && ! dragOutside && progression::layout::containsId (dragIds, event.id);
+
+            if (! replaceId.isNull() && event.id == replaceId)
+            {
+                // Card drop that would replace this chord: show the incoming chord in its place.
+                const auto bounds = blockBoundsFor (event);
+                drawBlock (g, progression::layout::withChordOf (event, dropEvent), bounds, false, false, false, true);
+
+                const auto tag = juce::Rectangle<float> (bounds.getCentreX() - 30.0f, bounds.getBottom() - 22.0f, 60.0f, 14.0f);
+                g.setColour (juce::Colours::black.withAlpha (0.65f));
+                g.fillRoundedRectangle (tag, 7.0f);
+                g.setColour (juce::Colours::white);
+                g.setFont (homeUI::font (9.0f, true));
+                g.drawText ("REPLACE", tag, juce::Justification::centred, false);
+                continue;
+            }
+
             drawBlock (g, event, blockBoundsFor (event), isSelected (event.id), false, isSlot, isGhost);
+
+            if (isGhost)
+            {
+                const auto bounds = blockBoundsFor (event);
+                const auto tag = juce::Rectangle<float> (bounds.getCentreX() - 28.0f, bounds.getBottom() - 22.0f, 56.0f, 14.0f);
+                g.setColour (juce::Colours::black.withAlpha (0.65f));
+                g.fillRoundedRectangle (tag, 7.0f);
+                g.setColour (juce::Colours::white);
+                g.setFont (homeUI::font (9.0f, true));
+                g.drawText ("INSERT", tag, juce::Justification::centred, false);
+            }
         }
 
         if (dragging)
@@ -390,6 +417,10 @@ namespace timeline
 
             dragIds = selection;
             dragOriginal = model.getEvents();
+            dragGroupStart = 1.0e9;
+            for (const auto& e : dragOriginal)
+                if (progression::layout::containsId (dragIds, e.id))
+                    dragGroupStart = juce::jmin (dragGroupStart, e.startBeats);
             dragStartMouseX = x;
             dragStartMouseY = y;
             dragOffset = {};
@@ -451,7 +482,8 @@ namespace timeline
             if (dragOutside)
                 previewEvents = progression::layout::without (dragOriginal, dragIds);
             else
-                previewEvents = progression::layout::moveGroup (dragOriginal, dragIds, xToBeats (event.x));
+                previewEvents = progression::layout::moveGroup (dragOriginal, dragIds,
+                                                                 dragGroupStart + xToBeats (event.x) - xToBeats (dragStartMouseX));
 
             previewActive = true;
             repaint();
@@ -474,7 +506,16 @@ namespace timeline
     {
         progression::layout::assignContiguous (events);
 
-        if (progression::layout::sameLayout (events, model.getEvents()))
+        // Nothing to do if neither the layout nor any chord changed (a replace keeps the layout).
+        const auto current = model.getEvents();
+        bool unchanged = progression::layout::sameLayout (events, current);
+
+        for (size_t i = 0; unchanged && i < events.size(); ++i)
+            unchanged = events[i].rootPitchClass == current[i].rootPitchClass
+                     && events[i].quality == current[i].quality
+                     && events[i].extension == current[i].extension;
+
+        if (unchanged)
             return;
 
         undoManager.beginNewTransaction (undoName);
@@ -700,20 +741,33 @@ namespace timeline
     void TimelineComponent::itemDragMove (const SourceDetails& details)
     {
         const auto events = model.getEvents();
+        const auto target = progression::layout::dropTargetAt (events, xToBeats (details.localPosition.x),
+                                                               juce::ModifierKeys::currentModifiers.isShiftDown());
 
-        auto ghost = dropEvent;
-        ghost.id = ghostId;
-        ghost.lengthBeats = dropLength;
+        if (target.replace)
+        {
+            // Replace: nothing moves; the chord under the pointer shows what it would become.
+            previewEvents = events;
+            replaceId = events[static_cast<size_t> (target.index)].id;
+        }
+        else
+        {
+            auto ghost = dropEvent;
+            ghost.id = ghostId;
+            ghost.lengthBeats = dropLength;
+            replaceId = juce::Uuid::null();
 
-        // The chords after the pointer move over to make room.
-        previewEvents = progression::layout::insertAt (events, { ghost },
-                                                       progression::layout::insertionIndex (events, xToBeats (details.localPosition.x)));
+            // Insert: the chords after the gap move over to make room.
+            previewEvents = progression::layout::insertAt (events, { ghost }, target.index);
+        }
+
         previewActive = true;
         repaint();
     }
 
     void TimelineComponent::itemDragExit (const SourceDetails&)
     {
+        replaceId = juce::Uuid::null();
         previewActive = false;
         previewEvents.clear();
         ghostId = juce::Uuid::null();
@@ -722,29 +776,40 @@ namespace timeline
         repaint();
     }
 
-    void TimelineComponent::addSlotEvent (int slot, int index)
-    {
-        progression::ChordEvent event;
-
-        if (makeEventFromSlot == nullptr || ! makeEventFromSlot (slot, event))
-            return;
-
-        event.id = juce::Uuid();
-        commit (progression::layout::insertAt (model.getEvents(), { event }, index), "Add chord");
-        setSelection ({ event.id });
-    }
-
     void TimelineComponent::itemDropped (const SourceDetails& details)
     {
-        const int index = progression::layout::insertionIndex (model.getEvents(), xToBeats (details.localPosition.x));
+        const auto events = model.getEvents();
+        const auto target = progression::layout::dropTargetAt (events, xToBeats (details.localPosition.x),
+                                                               juce::ModifierKeys::currentModifiers.isShiftDown());
+        const int slot = slotFromDescription (details.description);
 
         previewActive = false;
         previewEvents.clear();
+        replaceId = juce::Uuid::null();
         ghostId = juce::Uuid::null();
         scaleLockBeats = 0.0;
         interacting = false;
 
-        addSlotEvent (slotFromDescription (details.description), index);
+        progression::ChordEvent incoming;
+
+        if (makeEventFromSlot != nullptr && makeEventFromSlot (slot, incoming))
+        {
+            if (target.replace)
+            {
+                auto updated = events;
+                auto& chosen = updated[static_cast<size_t> (target.index)];
+                chosen = progression::layout::withChordOf (chosen, incoming);
+                commit (std::move (updated), "Replace chord");
+                setSelection ({ chosen.id });
+            }
+            else
+            {
+                incoming.id = juce::Uuid();
+                commit (progression::layout::insertAt (events, { incoming }, target.index), "Insert chord");
+                setSelection ({ incoming.id });
+            }
+        }
+
         repaint();
     }
 

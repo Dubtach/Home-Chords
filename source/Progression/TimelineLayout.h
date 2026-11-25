@@ -2,6 +2,7 @@
 
 #include "ChordEvent.h"
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 // =============================================================================
@@ -86,13 +87,83 @@ namespace progression::layout
         return events;
     }
 
-    // Take the chords in `ids` out and drop them, as a group, at `pointerBeat`
-    // (measured against the chords that stay behind).
-    inline std::vector<ChordEvent> moveGroup (const std::vector<ChordEvent>& events, const std::vector<juce::Uuid>& ids, double pointerBeat)
+    // Which gap between chords a block whose left edge is at `leftEdge` belongs
+    // in: the boundary (0, each chord's start, the end) nearest to that edge.
+    // Going by the block's left edge rather than the pointer means a long chord
+    // reaches the very start by moving exactly as far as it needs to.
+    inline int slotForLeftEdge (const std::vector<ChordEvent>& packed, double leftEdge) noexcept
+    {
+        int best = 0;
+        double bestDistance = std::abs (leftEdge);
+
+        for (size_t i = 1; i <= packed.size(); ++i)
+        {
+            const double boundary = i < packed.size() ? packed[i].startBeats : packed.back().endBeats();
+            const double distance = std::abs (leftEdge - boundary);
+
+            if (distance < bestDistance - 1.0e-9)
+            {
+                best = static_cast<int> (i);
+                bestDistance = distance;
+            }
+        }
+
+        return best;
+    }
+
+    // Take the chords in `ids` out and drop them, as a group, in the gap their
+    // left edge (`leftEdgeBeat`) is nearest to among the chords that stay.
+    inline std::vector<ChordEvent> moveGroup (const std::vector<ChordEvent>& events, const std::vector<juce::Uuid>& ids, double leftEdgeBeat)
     {
         const auto group = extract (events, ids);
         const auto rest = without (events, ids);
-        return insertAt (rest, group, insertionIndex (rest, pointerBeat));
+        return insertAt (rest, group, slotForLeftEdge (rest, leftEdgeBeat));
+    }
+
+    // Where a chord card dropped at `beat` lands: ON a chord's middle half it
+    // replaces that chord; near a chord's edge, or in the gap after the last
+    // chord, it is inserted between the chords. `forceInsert` (Shift) never replaces.
+    struct DropTarget
+    {
+        bool replace = false;
+        int index = 0;   // the chord replaced, or the position inserted at
+    };
+
+    inline DropTarget dropTargetAt (const std::vector<ChordEvent>& events, double beat, bool forceInsert = false) noexcept
+    {
+        if (events.empty() || beat < 0.0)
+            return { false, 0 };
+
+        for (size_t i = 0; i < events.size(); ++i)
+        {
+            const auto& e = events[i];
+
+            if (beat >= e.endBeats() && i + 1 < events.size())
+                continue;
+
+            if (beat >= e.endBeats())   // past the last chord
+                return { false, static_cast<int> (events.size()) };
+
+            const double fraction = e.lengthBeats > 0.0 ? (beat - e.startBeats) / e.lengthBeats : 0.5;
+
+            if (! forceInsert && fraction >= 0.25 && fraction <= 0.75)
+                return { true, static_cast<int> (i) };
+
+            return { false, static_cast<int> (i) + (fraction < 0.5 ? 0 : 1) };
+        }
+
+        return { false, static_cast<int> (events.size()) };
+    }
+
+    // `target` becomes the chord `incoming` describes, but keeps its place, length,
+    // id and playback style (rhythm, arp, bass, velocity).
+    inline ChordEvent withChordOf (ChordEvent target, const ChordEvent& incoming) noexcept
+    {
+        target.scaleDegree = incoming.scaleDegree;
+        target.rootPitchClass = incoming.rootPitchClass;
+        target.quality = incoming.quality;
+        target.extension = incoming.extension;
+        return target;
     }
 
     // Shift the group `slots` places earlier (negative) or later (positive) among the other chords.
