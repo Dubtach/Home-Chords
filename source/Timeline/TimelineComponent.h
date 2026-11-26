@@ -1,4 +1,5 @@
 #pragma once
+#include <map>
 
 #include "../Progression/ProgressionModel.h"
 #include "../Progression/ProgressionActions.h"
@@ -50,6 +51,7 @@ namespace timeline
         void mouseDown (const juce::MouseEvent&) override;
         void mouseDrag (const juce::MouseEvent&) override;
         void mouseUp (const juce::MouseEvent&) override;
+        void mouseDoubleClick (const juce::MouseEvent&) override;
         void mouseMove (const juce::MouseEvent&) override;
 
         // Chord cards dropped on the strip (description string "slot:<n>").
@@ -156,6 +158,23 @@ namespace timeline
         double dragGroupStart = 0.0;      // where the dragged group's left edge started, in beats
         juce::Uuid replaceId;             // card drop: the chord that would be replaced (null = inserting)
 
+        // Card drop: the dragged card floats under the pointer, like a block being reordered.
+        bool cardActive = false;
+        juce::Point<float> cardPointer;
+
+        // Shift+click toggles selection, Shift+drag duplicates the selected chords.
+        bool duplicateArmed = false;
+        bool duplicating = false;
+        bool shiftWasSelected = false;
+        bool shiftMoved = false;
+        juce::Uuid shiftId;
+
+        // Smooth shifting: each block eases toward where the layout says it belongs.
+        struct Anim { double start = 0.0, length = 0.0; };
+        std::map<juce::Uuid, Anim> anim;
+        bool stepAnimation();
+        juce::Rectangle<float> animatedBoundsFor (const progression::ChordEvent& event) const;
+
         std::vector<progression::ChordEvent> shown() const;   // the preview while a gesture runs, else the model
         double totalTimelineBeats() const noexcept;
         float pixelsPerBeat() const noexcept;
@@ -173,10 +192,10 @@ namespace timeline
         void commit (std::vector<progression::ChordEvent> events, const juce::String& undoName);
         void endGesture();
         void showContextMenu (const juce::MouseEvent&);
-        void drawBlock (juce::Graphics&, const progression::ChordEvent&, juce::Rectangle<float> bounds, bool selected, bool floating, bool slot, bool ghost) const;
+        void drawBlock (juce::Graphics&, const progression::ChordEvent&, juce::Rectangle<float> bounds, bool selected, bool floating, bool slot, bool ghost, bool replacing = false) const;
         static int slotFromDescription (const juce::var& description);
 
-        void timerCallback() override;   // repaints for the moving playhead, and when the model changed underneath us
+    void timerCallback() override;   // repaints for the moving playhead, and when the model changed underneath us
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TimelineComponent)
     };

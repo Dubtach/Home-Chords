@@ -322,8 +322,8 @@ namespace homeUI
             // Caption over value, to the right of the dial.
             const auto captionRow = area.removeFromTop (area.getHeight() * 0.5f);
             g.setFont (font (captionSize - 1.0f));
-            g.setColour (juce::Colours::black.withAlpha (on ? 0.72f : 0.4f));
-            g.drawText (caption, captionRow.withTrimmedTop (4.0f), juce::Justification::bottomLeft, false);
+            g.setColour (juce::Colours::white.withAlpha (on ? 0.55f : 0.3f));
+            g.drawFittedText (caption, captionRow.withTrimmedTop (4.0f).withWidth (captionRow.getWidth() + 14.0f).toNearestInt(), juce::Justification::bottomLeft, 1, 0.7f);
 
             g.setFont (font (12.5f));
             g.setColour (juce::Colours::white.withAlpha (on ? 1.0f : 0.5f));
@@ -391,6 +391,99 @@ namespace homeUI
     // A small labelled on/off tile -- a tick on a dark square when on,
     // empty when off, with a text label (set via setButtonText()) to its
     // right. Used for Auto Inversion; general-purpose beyond that.
+    // A small square icon button for the transport row (play/stop, restart,
+    // loop, host sync). Loop and link are toggles that light up when on.
+    class IconButton : public juce::Button
+    {
+    public:
+        enum class Icon { play, stop, restart, loop, link };
+
+        IconButton (Icon iconIn, juce::Colour accentColour) : juce::Button ("Icon"), icon (iconIn), accent (accentColour) {}
+
+        void setIcon (Icon newIcon)
+        {
+            if (icon != newIcon)
+            {
+                icon = newIcon;
+                repaint();
+            }
+        }
+
+        void paintButton (juce::Graphics& g, bool over, bool down) override
+        {
+            const auto bounds = getLocalBounds().toFloat().reduced (1.0f);
+            const bool enabled = isEnabled();
+            const bool on = getToggleState() && getClickingTogglesState();
+            const float fade = enabled ? 1.0f : 0.35f;
+
+            g.setColour (on ? accent.withAlpha (0.22f * fade) : juce::Colours::white.withAlpha ((down ? 0.16f : (over && enabled ? 0.11f : 0.06f))));
+            g.fillRoundedRectangle (bounds, 7.0f);
+            g.setColour ((on ? accent : juce::Colours::white).withAlpha ((on ? 0.9f : (over && enabled ? 0.45f : 0.20f)) * fade));
+            g.drawRoundedRectangle (bounds, 7.0f, 1.1f);
+
+            const auto colour = (on ? accent.brighter (0.25f) : juce::Colours::white).withAlpha (0.92f * fade);
+            g.setColour (colour);
+
+            const auto c = bounds.getCentre();
+            const float r = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.27f;
+            const auto stroke = juce::PathStrokeType (1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+
+            switch (icon)
+            {
+                case Icon::play:
+                {
+                    juce::Path p;
+                    p.addTriangle (c.x - r * 0.7f, c.y - r, c.x - r * 0.7f, c.y + r, c.x + r * 1.0f, c.y);
+                    g.fillPath (p);
+                    break;
+                }
+                case Icon::stop:
+                    g.fillRoundedRectangle (c.x - r * 0.85f, c.y - r * 0.85f, r * 1.7f, r * 1.7f, 2.0f);
+                    break;
+                case Icon::restart:
+                {
+                    g.fillRoundedRectangle (c.x - r * 1.0f, c.y - r, 2.2f, r * 2.0f, 1.0f);
+                    juce::Path p;
+                    p.addTriangle (c.x + r * 1.0f, c.y - r, c.x + r * 1.0f, c.y + r, c.x - r * 0.45f, c.y);
+                    g.fillPath (p);
+                    break;
+                }
+                case Icon::loop:
+                {
+                    // An open ring with an arrowhead: "repeat".
+                    const float a0 = 0.9f, a1 = juce::MathConstants<float>::twoPi - 0.2f;
+                    juce::Path ring;
+                    ring.addCentredArc (c.x, c.y, r, r, 0.0f, a0, a1, true);
+                    g.strokePath (ring, stroke);
+
+                    const float tipX = c.x + std::sin (a1) * r, tipY = c.y - std::cos (a1) * r;
+                    juce::Path head;
+                    head.addTriangle (tipX + 4.0f, tipY - 1.5f, tipX - 3.0f, tipY - 3.5f, tipX - 1.0f, tipY + 3.5f);
+                    g.fillPath (head);
+                    break;
+                }
+                case Icon::link:
+                {
+                    // Two interlocking chain links.
+                    for (int i = 0; i < 2; ++i)
+                    {
+                        juce::Path link;
+                        link.addRoundedRectangle (-r * 1.05f, -r * 0.5f, r * 1.4f, r * 1.0f, r * 0.5f);
+                        g.strokePath (link, stroke, juce::AffineTransform::rotation (-0.6f).translated (c.x + (i == 0 ? -r * 0.35f : r * 0.35f), c.y)
+                                                                      .scaled (1.0f, 1.0f, c.x, c.y));
+                    }
+                    break;
+                }
+            }
+        }
+
+    private:
+        Icon icon;
+        juce::Colour accent;
+
+        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (IconButton)
+    };
+
     class Checkbox : public juce::Button
     {
     public:
@@ -521,8 +614,9 @@ namespace homeUI
         // onDragRequested: the mouse moved a few pixels with the button down;
         // the audition has already been released, and the owner should start
         // a drag-and-drop (e.g. onto the timeline).
-        // onDoubleClicked: double-click (e.g. append the chord to the timeline).
-        std::function<void()> onPressStart, onPressEnd, onEditRequested, onDragRequested, onDoubleClicked;
+        // onShiftClicked: shift+click (e.g. append the chord to the timeline); it
+        // doesn't audition the chord, and a shift-drag is still just a drag.
+        std::function<void()> onPressStart, onPressEnd, onEditRequested, onDragRequested, onShiftClicked;
 
         void paint (juce::Graphics& g) override
         {
@@ -593,11 +687,16 @@ namespace homeUI
                 return;
 
             dragStarted = false;
+            shiftPress = false;
 
             if (event.mods.isPopupMenu())
             {
                 if (onEditRequested != nullptr)
                     onEditRequested();
+            }
+            else if (event.mods.isShiftDown() && onShiftClicked != nullptr)
+            {
+                shiftPress = true;   // acted on at mouseUp, if it turns out not to be a drag
             }
             else if (onPressStart != nullptr)
             {
@@ -623,20 +722,17 @@ namespace homeUI
                 onDragRequested();
         }
 
-        void mouseDoubleClick (const juce::MouseEvent& event) override
-        {
-            if (hasChord() && ! event.mods.isPopupMenu() && onDoubleClicked != nullptr)
-                onDoubleClicked();
-        }
-
         void mouseUp (const juce::MouseEvent& event) override
         {
             // A right-click's mouseUp shouldn't stop a chord it never
             // started, and a drag has already released its audition.
-            if (hasChord() && ! event.mods.isPopupMenu() && ! dragStarted && onPressEnd != nullptr)
+            if (shiftPress && ! dragStarted && hasChord() && onShiftClicked != nullptr)
+                onShiftClicked();
+            else if (hasChord() && ! event.mods.isPopupMenu() && ! shiftPress && ! dragStarted && onPressEnd != nullptr)
                 onPressEnd();
 
             dragStarted = false;
+            shiftPress = false;
         }
 
     private:
@@ -645,6 +741,7 @@ namespace homeUI
         float lit = 0.0f;
         bool hasOverrideFlag = false;
         bool dragStarted = false;
+        bool shiftPress = false;
         int suggestionRank = 0;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChordCard)

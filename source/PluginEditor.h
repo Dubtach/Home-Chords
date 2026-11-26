@@ -33,9 +33,9 @@ class HomeChordsAudioProcessorEditor : public juce::AudioProcessorEditor,
 {
 public:
     static constexpr int defaultWidth = 820;
-    static constexpr int defaultHeight = 402;
+    static constexpr int defaultHeight = 424;
     static constexpr int minWidth = 780;
-    static constexpr int minHeight = 362;
+    static constexpr int minHeight = 376;
 
     explicit HomeChordsAudioProcessorEditor (HomeChordsAudioProcessor&);
     ~HomeChordsAudioProcessorEditor() override;
@@ -60,8 +60,11 @@ private:
     homeUI::StepperBox rhythmBox, bassBox, arpModeBox, arpRateBox, gateBox;
 
     homeUI::Checkbox autoInversionCheckbox { homeUI::green };
-    homeUI::Checkbox loopCheckbox { homeUI::cyan };
-    homeUI::Checkbox syncCheckbox { homeUI::purple };
+    // Transport icons, centred under the timeline.
+    homeUI::IconButton playStopButton { homeUI::IconButton::Icon::play, homeUI::cyan };
+    homeUI::IconButton restartButton  { homeUI::IconButton::Icon::restart, homeUI::cyan };
+    homeUI::IconButton loopCheckbox   { homeUI::IconButton::Icon::loop, homeUI::cyan };
+    homeUI::IconButton syncCheckbox   { homeUI::IconButton::Icon::link, homeUI::purple };
     homeUI::Checkbox hintsCheckbox { homeUI::green };
     homeUI::ChevronButton octaveDownButton { homeUI::ChevronButton::left, homeUI::cyan };
     homeUI::ChevronButton octaveUpButton   { homeUI::ChevronButton::right, homeUI::cyan };
@@ -72,8 +75,6 @@ private:
     homeUI::Knob humanizeVelKnob  { "VEL VAR", homeUI::purple };
 
     homeUI::TimeSigChip timeSigChip;   // sits in the timeline's corner; timeSigBox (hidden) holds the parameter
-    juce::TextButton playStopButton { "Play" };
-    juce::TextButton restartButton { "|<" };
     juce::TextButton presetsButton { "Presets" };
     juce::TextButton exportButton { "Export" };
     homeUI::MidiDragTile dragTile;
@@ -101,6 +102,7 @@ private:
     int hintSignature = -1;
 
     juce::Rectangle<float> brandBounds, lampBounds, footerCardBounds, octaveLabelBounds, octaveValueWellBounds, playbackLabelBounds;
+    juce::Rectangle<float> voicingCardBounds, voicingTitleBounds, dividerOne, dividerTwo;
 
     std::array<bool, musictheory::maxDiatonicSlots> keyHeldState {};
     std::array<float, musictheory::maxDiatonicSlots> litAmount {};

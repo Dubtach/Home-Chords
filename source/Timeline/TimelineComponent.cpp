@@ -12,7 +12,7 @@ namespace timeline
     {
         setWantsKeyboardFocus (false);
         lastSeenModelRevision = model.getRevision();
-        startTimerHz (30);
+        startTimerHz (60);
     }
 
     TimelineComponent::~TimelineComponent()
@@ -69,6 +69,66 @@ namespace timeline
         const float width = juce::jmax (4.0f, static_cast<float> (beatsToX (event.endBeats())) - x);
         const float height = juce::jlimit (10.0f, blockHeightMax, static_cast<float> (getHeight()) - top - 4.0f);
         return { x, top, width, height };
+    }
+
+    juce::Rectangle<float> TimelineComponent::animatedBoundsFor (const progression::ChordEvent& event) const
+    {
+        auto target = blockBoundsFor (event);
+        const auto it = anim.find (event.id);
+
+        if (it == anim.end())
+            return target;
+
+        const float x = static_cast<float> (beatsToX (it->second.start));
+        const float right = static_cast<float> (beatsToX (it->second.start + it->second.length));
+        target.setX (x);
+        target.setWidth (juce::jmax (4.0f, right - x));
+        return target;
+    }
+
+    bool TimelineComponent::stepAnimation()
+    {
+        bool moving = false;
+        const auto events = shown();
+
+        for (const auto& e : events)
+        {
+            auto it = anim.find (e.id);
+
+            if (it == anim.end())
+            {
+                // New blocks grow open (the card being dropped in); others just appear.
+                it = anim.emplace (e.id, Anim { e.startBeats, e.id == ghostId ? 0.0 : e.lengthBeats }).first;
+            }
+
+            auto& a = it->second;
+
+            if (draggingRightEdge)
+            {
+                a = { e.startBeats, e.lengthBeats };   // resizing must feel immediate
+                continue;
+            }
+
+            const double ds = e.startBeats - a.start, dl = e.lengthBeats - a.length;
+
+            if (std::abs (ds) < 0.004 && std::abs (dl) < 0.004)
+            {
+                a = { e.startBeats, e.lengthBeats };
+                continue;
+            }
+
+            a.start += ds * 0.32;
+            a.length += dl * 0.32;
+            moving = true;
+        }
+
+        for (auto it = anim.begin(); it != anim.end();)
+        {
+            const bool alive = std::any_of (events.begin(), events.end(), [&it] (const auto& e) { return e.id == it->first; });
+            it = alive ? std::next (it) : anim.erase (it);
+        }
+
+        return moving;
     }
 
     bool TimelineComponent::eventAt (int x, int y, juce::Uuid& idOut, bool* onRightEdge) const
@@ -236,35 +296,10 @@ namespace timeline
         for (const auto& event : shown())
         {
             const bool isGhost = (event.id == ghostId);
-            const bool isSlot = dragging && ! dragOutside && progression::layout::containsId (dragIds, event.id);
+            const bool isSlot = isGhost || (dragging && ! dragOutside && progression::layout::containsId (dragIds, event.id));
+            const bool isReplaced = ! replaceId.isNull() && event.id == replaceId;
 
-            if (! replaceId.isNull() && event.id == replaceId)
-            {
-                // Card drop that would replace this chord: show the incoming chord in its place.
-                const auto bounds = blockBoundsFor (event);
-                drawBlock (g, progression::layout::withChordOf (event, dropEvent), bounds, false, false, false, true);
-
-                const auto tag = juce::Rectangle<float> (bounds.getCentreX() - 30.0f, bounds.getBottom() - 22.0f, 60.0f, 14.0f);
-                g.setColour (juce::Colours::black.withAlpha (0.65f));
-                g.fillRoundedRectangle (tag, 7.0f);
-                g.setColour (juce::Colours::white);
-                g.setFont (homeUI::font (9.0f, true));
-                g.drawText ("REPLACE", tag, juce::Justification::centred, false);
-                continue;
-            }
-
-            drawBlock (g, event, blockBoundsFor (event), isSelected (event.id), false, isSlot, isGhost);
-
-            if (isGhost)
-            {
-                const auto bounds = blockBoundsFor (event);
-                const auto tag = juce::Rectangle<float> (bounds.getCentreX() - 28.0f, bounds.getBottom() - 22.0f, 56.0f, 14.0f);
-                g.setColour (juce::Colours::black.withAlpha (0.65f));
-                g.fillRoundedRectangle (tag, 7.0f);
-                g.setColour (juce::Colours::white);
-                g.setFont (homeUI::font (9.0f, true));
-                g.drawText ("INSERT", tag, juce::Justification::centred, false);
-            }
+            drawBlock (g, event, animatedBoundsFor (event), isSelected (event.id), false, isSlot, false, isReplaced);
         }
 
         if (dragging)
@@ -274,6 +309,16 @@ namespace timeline
                     drawBlock (g, original, blockBoundsFor (original).translated (static_cast<float> (dragOffset.x),
                                                                                     static_cast<float> (dragOffset.y)),
                                true, true, false, false);
+        }
+
+        // A card being dragged in floats under the pointer, the same way a block does.
+        if (cardActive)
+        {
+            auto bounds = blockBoundsFor (dropEvent);
+            const float w = juce::jlimit (70.0f, 140.0f, static_cast<float> (dropLength) * pixelsPerBeat());
+            bounds.setWidth (w);
+            bounds.setCentre (cardPointer.x, bounds.getCentreY() + (cardPointer.y - bounds.getCentreY()) * 0.35f);
+            drawBlock (g, dropEvent, bounds, true, true, false, false);
         }
 
         // Playhead.
@@ -302,19 +347,19 @@ namespace timeline
             g.setColour (homeUI::warn);
             g.drawRoundedRectangle (pill, 10.0f, 1.0f);
             g.setFont (homeUI::font (11.0f));
-            g.drawText ("Release to remove", pill, juce::Justification::centred, false);
+            g.drawText (duplicating ? "Release to cancel" : "Release to remove", pill, juce::Justification::centred, false);
         }
         else if (model.isEmpty() && ! previewActive)
         {
             g.setFont (homeUI::font (11.0f, false));
             g.setColour (juce::Colours::white.withAlpha (0.38f));
-            g.drawText ("Drag chords here from the cards above   (or double-click a card)",
+            g.drawText ("Drag chords here from the cards above   (or Shift+click a card)",
                         getLocalBounds(), juce::Justification::centred, false);
         }
     }
 
     void TimelineComponent::drawBlock (juce::Graphics& g, const progression::ChordEvent& event, juce::Rectangle<float> bounds,
-                                       bool selected, bool floating, bool slot, bool ghost) const
+                                       bool selected, bool floating, bool slot, bool ghost, bool replacing) const
     {
         juce::Colour accent = homeUI::green;
         switch (event.quality)
@@ -342,10 +387,11 @@ namespace timeline
 
         if (slot)
         {
-            // The open slot a dragged chord will land in: a faint, dashed place-holder.
-            g.setColour (accent.withAlpha (0.16f));
+            // The open slot a dragged chord will land in: a soft, glowing place-holder.
+            g.setColour (accent.withAlpha (0.14f));
             g.fillRoundedRectangle (outline, 6.0f);
-            dashedOutline();
+            g.setColour (accent.brighter (0.4f).withAlpha (0.75f));
+            g.drawRoundedRectangle (outline, 6.0f, 1.5f);
             g.restoreState();
             return;
         }
@@ -354,10 +400,20 @@ namespace timeline
             g.setOpacity (0.62f);
         else if (floating)
             g.setOpacity (dragOutside ? 0.5f : 0.88f);
+        else if (replacing)
+            g.setOpacity (0.85f);
 
         homeUI::drawCard (g, outline, (selected || floating) ? accent.brighter (0.3f) : accent.darker (event.enabled ? 0.0f : 0.5f));
 
-        if (ghost)
+        if (replacing)
+        {
+            // Dropping a card here replaces this chord: tint it red.
+            g.setColour (juce::Colour (0xffe5383b).withAlpha (0.55f));
+            g.fillRoundedRectangle (outline, 6.0f);
+            g.setColour (juce::Colour (0xffff4d4f));
+            g.drawRoundedRectangle (outline, 6.0f, 2.5f);
+        }
+        else if (ghost)
             dashedOutline();
         else if (floating)
         {
@@ -399,16 +455,34 @@ namespace timeline
         juce::Uuid foundId;
         bool onRightEdge = false;
         const bool found = eventAt (x, y, foundId, &onRightEdge);
-        const bool additive = event.mods.isShiftDown() || event.mods.isCommandDown() || event.mods.isCtrlDown();
+        const bool toggleMod = event.mods.isCommandDown() || event.mods.isCtrlDown();
+        const bool shiftMod = event.mods.isShiftDown() && ! toggleMod;
+        const bool additive = shiftMod || toggleMod;
+
+        duplicateArmed = duplicating = shiftMoved = false;
 
         if (found)
         {
-            if (additive)
+            if (toggleMod)
             {
                 toggleInSelection (foundId);
 
                 if (! isSelected (foundId))
                     return;   // it was just removed from the selection: nothing to drag
+            }
+            else if (shiftMod)
+            {
+                // Shift+click toggles; Shift+drag duplicates the selection.
+                shiftId = foundId;
+                shiftWasSelected = isSelected (foundId);
+                duplicateArmed = true;
+
+                if (! shiftWasSelected)
+                {
+                    auto next = selection;
+                    next.push_back (foundId);
+                    setSelection (std::move (next));
+                }
             }
             else if (! isSelected (foundId))
             {
@@ -474,13 +548,37 @@ namespace timeline
             return;
         }
 
+        if (draggingBody && duplicateArmed && ! duplicating)
+        {
+            if (std::abs (event.x - dragStartMouseX) + std::abs (event.y - dragStartMouseY) < 4)
+                return;
+
+            // Leave the originals where they are and drag copies of them.
+            duplicating = true;
+            std::vector<juce::Uuid> copyIds;
+
+            for (const auto& e : model.getEvents())
+            {
+                if (! progression::layout::containsId (dragIds, e.id))
+                    continue;
+
+                auto copy = e;
+                copy.id = juce::Uuid();
+                copyIds.push_back (copy.id);
+                dragOriginal.push_back (copy);
+            }
+
+            dragIds = copyIds;
+        }
+
         if (draggingBody)
         {
+            shiftMoved = true;
             dragOutside = isOutside (event.getPosition());
             dragOffset = { event.x - dragStartMouseX, event.y - dragStartMouseY };
 
             if (dragOutside)
-                previewEvents = progression::layout::without (dragOriginal, dragIds);
+                previewEvents = progression::layout::without (dragOriginal, dragIds);   // (a duplicate drag is simply cancelled)
             else
                 previewEvents = progression::layout::moveGroup (dragOriginal, dragIds,
                                                                  dragGroupStart + xToBeats (event.x) - xToBeats (dragStartMouseX));
@@ -528,7 +626,16 @@ namespace timeline
         {
             auto result = previewEvents;
 
-            if (draggingBody && dragOutside)
+            if (draggingBody && duplicating)
+            {
+                if (! dragOutside)
+                {
+                    const auto copies = dragIds;
+                    commit (std::move (result), copies.size() > 1 ? "Duplicate chords" : "Duplicate chord");
+                    setSelection (copies);
+                }
+            }
+            else if (draggingBody && dragOutside)
             {
                 commit (std::move (result), dragIds.size() > 1 ? "Delete chords" : "Delete chord");
                 setSelection ({});
@@ -548,14 +655,33 @@ namespace timeline
         marqueeActive = false;
         marqueeMoved = false;
         marqueeRect = {};
+        duplicateArmed = duplicating = false;
         dragIds.clear();
         dragOriginal.clear();
         scaleLockBeats = 0.0;
         interacting = false;
     }
 
+    void TimelineComponent::mouseDoubleClick (const juce::MouseEvent& event)
+    {
+        juce::Uuid id;
+
+        if (event.mods.isPopupMenu() || ! eventAt (event.x, event.y, id, nullptr))
+            return;
+
+        // Double-click removes the chord from the timeline.
+        endGesture();
+        commit (progression::layout::without (model.getEvents(), { id }), "Delete chord");
+        setSelection ({});
+        repaint();
+    }
+
     void TimelineComponent::mouseUp (const juce::MouseEvent&)
     {
+        // Shift+click on an already-selected chord (no drag) takes it out of the selection.
+        if (duplicateArmed && ! duplicating && ! shiftMoved && shiftWasSelected)
+            toggleInSelection (shiftId);
+
         endGesture();
         repaint();
     }
@@ -744,9 +870,12 @@ namespace timeline
         const auto target = progression::layout::dropTargetAt (events, xToBeats (details.localPosition.x),
                                                                juce::ModifierKeys::currentModifiers.isShiftDown());
 
+        cardActive = true;
+        cardPointer = details.localPosition.toFloat();
+
         if (target.replace)
         {
-            // Replace: nothing moves; the chord under the pointer shows what it would become.
+            // Replace: nothing moves; the chord under the pointer is tinted red.
             previewEvents = events;
             replaceId = events[static_cast<size_t> (target.index)].id;
         }
@@ -767,6 +896,7 @@ namespace timeline
 
     void TimelineComponent::itemDragExit (const SourceDetails&)
     {
+        cardActive = false;
         replaceId = juce::Uuid::null();
         previewActive = false;
         previewEvents.clear();
@@ -783,6 +913,7 @@ namespace timeline
                                                                juce::ModifierKeys::currentModifiers.isShiftDown());
         const int slot = slotFromDescription (details.description);
 
+        cardActive = false;
         previewActive = false;
         previewEvents.clear();
         replaceId = juce::Uuid::null();
@@ -822,6 +953,7 @@ namespace timeline
         // presets) -- cheaper and more reliable than every caller remembering
         // to call refreshFromModel().
         const auto revision = model.getRevision();
+        const bool animating = stepAnimation();
         const bool modelChanged = (revision != lastSeenModelRevision);
         lastSeenModelRevision = revision;
 
@@ -838,7 +970,7 @@ namespace timeline
                 setSelection (std::move (alive));
         }
 
-        if (modelChanged || player.isPlaying())
+        if (modelChanged || animating || player.isPlaying())
             repaint();
     }
 }

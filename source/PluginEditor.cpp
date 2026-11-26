@@ -77,7 +77,7 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
         card.onPressEnd       = [this, i] { processor.setChordSlotHeldFromMouse (i, false); };
         card.onEditRequested  = [this, i] { showChordMenu (i); };
         card.onDragRequested  = [this, i] { startCardDrag (i); };
-        card.onDoubleClicked  = [this, i] { processor.addChordFromSlotToTimeline (i); timelineComponent.refreshFromModel(); };
+        card.onShiftClicked   = [this, i] { processor.addChordFromSlotToTimeline (i); timelineComponent.refreshFromModel(); };
     }
 
     snapBox.addItemList ({ "1/16", "1/8", "1/4", "1/2", "Bar" }, 1);
@@ -127,14 +127,15 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
     octaveUpButton.onClick   = [this] { nudgeOctave (1); };
 
     autoInversionCheckbox.setButtonText ("SMOOTH VOICING");
-    loopCheckbox.setButtonText ("LOOP");
-    syncCheckbox.setButtonText ("HOST SYNC");
+    loopCheckbox.setClickingTogglesState (true);
+    syncCheckbox.setClickingTogglesState (true);
     autoInversionCheckbox.setTooltip ("Voice-lead: each new chord picks the inversion closest to the last one");
-    syncCheckbox.setTooltip ("Follow the host: play/stop, position and tempo come from your DAW");
+    syncCheckbox.setTooltip ("Host sync: follow your DAW's play/stop, position and tempo");
     loopCheckbox.setTooltip ("Loop the timeline (L)");
 
-    for (auto* box : { &autoInversionCheckbox, &loopCheckbox, &syncCheckbox })
-        addAndMakeVisible (*box);
+    addAndMakeVisible (autoInversionCheckbox);
+    for (auto* button : { &playStopButton, &restartButton, &loopCheckbox, &syncCheckbox })
+        addAndMakeVisible (*button);
 
     for (auto* knob : { &velocityKnob, &tempoKnob, &previewKnob, &humanizeTimeKnob, &humanizeVelKnob })
         addAndMakeVisible (*knob);
@@ -147,8 +148,7 @@ HomeChordsAudioProcessorEditor::HomeChordsAudioProcessorEditor (HomeChordsAudioP
     previewKnob.valueText  = [] (double v) { return juce::String (v, 1) + " dB"; };
     tempoKnob.valueText    = [] (double v) { return juce::String (static_cast<int> (v)); };
 
-    for (auto* button : { &playStopButton, &restartButton,
-                          &presetsButton, &exportButton })
+    for (auto* button : { &presetsButton, &exportButton })
     {
         styleTextButton (*button, homeUI::cyan);
         addAndMakeVisible (*button);
@@ -242,13 +242,13 @@ void HomeChordsAudioProcessorEditor::resized()
 
     auto header = area.removeFromTop (30);
     area.removeFromTop (4);
-    auto chordRow = area.removeFromTop (80);
+    auto chordRow = area.removeFromTop (74);
     area.removeFromTop (5);
-    auto toolsRow = area.removeFromTop (24);
+    auto playbackRow = area.removeFromTop (24);   // scope label, rhythm, arp ... presets
     area.removeFromTop (5);
-    auto footer = area.removeFromBottom (74);
+    auto footer = area.removeFromBottom (96);
     area.removeFromBottom (5);
-    auto playbackRow = area.removeFromBottom (22);
+    auto transportRow = area.removeFromBottom (28);   // play, restart, loop, host sync -- centred
     area.removeFromBottom (5);
     auto timelineArea = area;   // whatever's left
 
@@ -282,62 +282,74 @@ void HomeChordsAudioProcessorEditor::resized()
         }
     }
 
-    // ---- tools row ----
-    {
-        auto right = toolsRow;
-        presetsButton.setBounds (right.removeFromRight (104));
-        right.removeFromRight (10);
-
-        auto left = toolsRow.withRight (right.getRight());
-        put (left, playStopButton, 50);
-        put (left, restartButton, 28, 8);
-        put (left, loopCheckbox, 58, 6);
-        put (left, syncCheckbox, 92, 8);
-    }
-
     // ---- timeline ----
     timelineComponent.setBounds (timelineArea);
     timeSigChip.setBounds (timelineArea.getRight() - timelineComponent.cornerWidth - 4, timelineArea.getY() + 3,
                            timelineComponent.cornerWidth, 20);
 
-    // ---- playback row: label | rhythm | arp | rate | gate ----
+    // ---- playback row: scope label | rhythm | arp | rate | gate ......... presets ----
+    presetsButton.setBounds (playbackRow.removeFromRight (104));
     playbackLabelBounds = playbackRow.removeFromLeft (94).toFloat();
     put (playbackRow, rhythmBox, 124);
     put (playbackRow, arpModeBox, 112);
     put (playbackRow, arpRateBox, 104);
     put (playbackRow, gateBox, 108);
 
-    // ---- footer: octave | checkboxes | five knobs ----
-    footerCardBounds = footer.toFloat();
-    auto footerContent = footer.reduced (12, 6);
+    // ---- transport icons, centred under the timeline ----
+    {
+        constexpr int iconWidth = 38, gap = 8;
+        const int total = 4 * iconWidth + 3 * gap;
+        auto strip = transportRow.withSizeKeepingCentre (total, transportRow.getHeight());
 
-    auto octaveArea = footerContent.removeFromLeft (96);
+        for (auto* button : { &playStopButton, &restartButton, &loopCheckbox, &syncCheckbox })
+        {
+            button->setBounds (strip.removeFromLeft (iconWidth));
+            strip.removeFromLeft (gap);
+        }
+    }
+
+    // ---- footer: octave | voicing section | five knobs ----
+    footerCardBounds = footer.toFloat();
+    auto footerContent = footer.reduced (10, 8);
+
+    auto octaveArea = footerContent.removeFromLeft (98);
     octaveLabelBounds = octaveArea.removeFromTop (14).toFloat();
-    octaveArea.removeFromTop (2);
+    octaveArea.removeFromTop (6);
+    octaveArea = octaveArea.removeFromTop (38);
     octaveDownButton.setBounds (octaveArea.removeFromLeft (24));
     octaveArea.removeFromLeft (3);
     octaveUpButton.setBounds (octaveArea.removeFromRight (24));
     octaveArea.removeFromRight (3);
     octaveValueWellBounds = octaveArea.toFloat();
 
-    footerContent.removeFromLeft (14);
+    footerContent.removeFromLeft (8);
+    dividerOne = juce::Rectangle<float> (static_cast<float> (footerContent.getX()), static_cast<float> (footerContent.getY() + 4),
+                                         1.0f, static_cast<float> (footerContent.getHeight() - 8));
+    footerContent.removeFromLeft (9);
 
-    // Voicing group: how the notes are arranged -- spread, bass note, smoothing.
-    auto voicingArea = footerContent.removeFromLeft (150);
-    voicingBox.setBounds (voicingArea.removeFromTop (20));
-    voicingArea.removeFromTop (1);
-    bassBox.setBounds (voicingArea.removeFromTop (20));
-    voicingArea.removeFromTop (1);
-    autoInversionCheckbox.setBounds (voicingArea.removeFromTop (20));
+    // Voicing section: its own titled sub-panel -- how the notes are arranged.
+    auto voicingCard = footerContent.removeFromLeft (172);
+    voicingCardBounds = voicingCard.toFloat();
+    auto voicingInner = voicingCard.reduced (8, 5);
+    voicingTitleBounds = voicingInner.removeFromTop (12).toFloat();
+    voicingInner.removeFromTop (2);
+    voicingBox.setBounds (voicingInner.removeFromTop (20));
+    voicingInner.removeFromTop (3);
+    bassBox.setBounds (voicingInner.removeFromTop (20));
+    voicingInner.removeFromTop (3);
+    autoInversionCheckbox.setBounds (voicingInner.removeFromTop (18).withTrimmedLeft (2));
 
-    footerContent.removeFromLeft (10);
+    footerContent.removeFromLeft (9);
+    dividerTwo = juce::Rectangle<float> (static_cast<float> (footerContent.getX()), static_cast<float> (footerContent.getY() + 4),
+                                         1.0f, static_cast<float> (footerContent.getHeight() - 8));
+    footerContent.removeFromLeft (8);
 
     const int knobWidth = footerContent.getWidth() / 5;
-    velocityKnob.setBounds (footerContent.removeFromLeft (knobWidth).reduced (4, 0));
-    tempoKnob.setBounds (footerContent.removeFromLeft (knobWidth).reduced (4, 0));
-    previewKnob.setBounds (footerContent.removeFromLeft (knobWidth).reduced (4, 0));
-    humanizeTimeKnob.setBounds (footerContent.removeFromLeft (knobWidth).reduced (4, 0));
-    humanizeVelKnob.setBounds (footerContent.reduced (4, 0));
+    velocityKnob.setBounds (footerContent.removeFromLeft (knobWidth).reduced (3, 0));
+    tempoKnob.setBounds (footerContent.removeFromLeft (knobWidth).reduced (3, 0));
+    previewKnob.setBounds (footerContent.removeFromLeft (knobWidth).reduced (3, 0));
+    humanizeTimeKnob.setBounds (footerContent.removeFromLeft (knobWidth).reduced (3, 0));
+    humanizeVelKnob.setBounds (footerContent.reduced (3, 0));
 }
 
 void HomeChordsAudioProcessorEditor::paint (juce::Graphics& g)
@@ -381,13 +393,31 @@ void HomeChordsAudioProcessorEditor::paint (juce::Graphics& g)
 
     if (! footerCardBounds.isEmpty())
     {
-        const auto footerCardColour = homeUI::cyan.withSaturation (0.30f).withBrightness (0.50f);
-        homeUI::drawCard (g, footerCardBounds, footerCardColour);
+        // A dark, quiet control panel (the colourful cards above are the stars).
+        g.setColour (juce::Colour (0xff15171f));
+        g.fillRoundedRectangle (footerCardBounds, 8.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.08f));
+        g.drawRoundedRectangle (footerCardBounds.reduced (0.5f), 8.0f, 1.0f);
 
-        homeUI::drawCardText (g, "OCTAVE", octaveLabelBounds, 9.0f, juce::Justification::centredLeft, 0.75f);
+        g.setColour (juce::Colours::white.withAlpha (0.08f));
+        g.fillRect (dividerOne);
+        g.fillRect (dividerTwo);
+
+        // Voicing sub-panel.
+        g.setColour (juce::Colours::white.withAlpha (0.045f));
+        g.fillRoundedRectangle (voicingCardBounds, 6.0f);
+        g.setColour (homeUI::green.withAlpha (0.28f));
+        g.drawRoundedRectangle (voicingCardBounds.reduced (0.5f), 6.0f, 1.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.6f));
+        homeUI::drawTrackedText (g, "VOICING", voicingTitleBounds.getX() + 1.0f, voicingTitleBounds.getY(),
+                                 voicingTitleBounds.getHeight(), 52.0f, 8.5f);
+
+        g.setColour (juce::Colours::white.withAlpha (0.6f));
+        homeUI::drawTrackedText (g, "OCTAVE", octaveLabelBounds.getX() + 1.0f, octaveLabelBounds.getY(),
+                                 octaveLabelBounds.getHeight(), 44.0f, 8.5f);
 
         homeUI::drawWell (g, octaveValueWellBounds, 4.0f);
-        g.setFont (homeUI::font (14.0f));
+        g.setFont (homeUI::font (15.0f));
         g.setColour (juce::Colours::white);
         const int octaveValue = static_cast<int> (processor.apvts.getRawParameterValue ("OCTAVE")->load());
         const auto octaveText = (octaveValue > 0 ? "+" : juce::String()) + juce::String (octaveValue);
@@ -642,7 +672,7 @@ void HomeChordsAudioProcessorEditor::timerCallback()
     restartButton.setEnabled (! hostSync);
     loopCheckbox.setEnabled (! hostSync);
     tempoKnob.setEnabled (! hostSync);
-    playStopButton.setButtonText (hostSync ? "Host" : (processor.sequencePlayer.isPlaying() ? "Stop" : "Play"));
+    playStopButton.setIcon (processor.sequencePlayer.isPlaying() ? homeUI::IconButton::Icon::stop : homeUI::IconButton::Icon::play);
 
     // Things the timeline needs from parameters (cheap; the setters only
     // repaint on an actual change).

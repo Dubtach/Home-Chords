@@ -123,3 +123,6 @@ tests/                    Catch2 unit tests.
 
 Full detail, architectural reasoning, and an honest list of what isn't
 built yet (or is a deliberate simplification): [`STATUS.md`](STATUS.md).
+
+## v8 notes
+Shift+click a chord card to add it to the timeline. In the timeline: Shift+click toggles selection, Shift+drag duplicates, double-click removes a chord. Dragging a card onto a chord's middle replaces it (shown in red); near an edge it inserts.

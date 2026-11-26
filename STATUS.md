@@ -637,3 +637,11 @@ keyboard/timeline behaviour without a DAW in the loop.
 5. After that: sections (spec 30), per-source MIDI keyboard velocity, a
    Simple voicing mode, and sample-accurate internal pulses are the
    natural next pieces.
+
+## v8 pass — drag feedback, transport icons, footer
+- Card drops now use the same preview as reordering: the card floats under the pointer, the others slide aside around a soft slot. No dashed ghost, no INSERT/REPLACE tags. When a drop would replace a chord, that chord is tinted red.
+- Blocks ease smoothly to their new positions (card drops, reorders, deletes, undo).
+- Shift+click on a chord card adds it to the timeline (replaces double-click). On the timeline: Shift+click toggles selection, Shift+drag duplicates the selected chords (drag outside to cancel), double-click a chord removes it. Ctrl/Cmd+click still toggles.
+- Play/Stop, Back to start, Loop and Host sync are icon buttons centred under the timeline. The chord-style row (scope label, Rhythm, arp controls, Presets) moved up under the chord cards.
+- Footer: dark panel, light captions, separate VOICING section (Spread, Bass, Smooth voicing), Octave on the left, five knobs on the right.
+- Not exercised in real environments: OS-level drag and drop, DAW host sync, MSVC build, listening tests.
